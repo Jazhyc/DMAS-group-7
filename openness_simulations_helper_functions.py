@@ -281,7 +281,8 @@ def double_plot(input_frame,T,allocation,n_iterations,scale_to_complete,importan
     opm_overview = pd.melt(input_frame[[col for col in input_frame if col.startswith(('opm_status_','iteration'))]],id_vars=['iteration'])
     # need to replace NaNs in value
     opm_overview = opm_overview.replace(np.nan,0)
-    opm_overview['variable'] = opm_overview.variable.str.replace('opm_status_?' , '')
+    opm_overview['variable'] = opm_overview.variable.str.replace('opm_status_' , '')
+    
     # want to remove outliers, e.g. if only one or two are left to become OPM - after last iteration has converged
     opm_min = opm_overview.groupby(['variable','iteration']).sum().reset_index()
     opm_min.variable = opm_min.variable.astype(float)
@@ -306,7 +307,7 @@ def double_plot(input_frame,T,allocation,n_iterations,scale_to_complete,importan
     # NEED TO ADD ERROR BARS - one standard error away
     if n_iterations>1:
         opm_round_values = opm_overview.groupby(['iteration','variable']).sum().reset_index()
-        opm_round_values['variable'] = opm_round_values.variable.str.replace('opm_status_?' , '')
+        opm_round_values['variable'] = opm_round_values.variable.str.replace('opm_status_' , '')
         opm_round_values.variable = opm_round_values.variable.astype(float)
         if scale_to_complete:
             #opm_round_values = opm_round_values.loc[opm_round_values['variable']<=time_to_consensus,]
@@ -424,7 +425,7 @@ def double_plot(input_frame,T,allocation,n_iterations,scale_to_complete,importan
     opinion_overview = pd.merge(opinion_overview,final_opinions,on=['iteration','id'],how='left')
     opinion_overview.value.fillna(opinion_overview.value_fill,inplace=True)
     opinion_overview = opinion_overview.drop('value_fill',axis=1)
-    opinion_overview['variable'] = opinion_overview.variable.str.replace('opinions_?' , '')
+    opinion_overview['variable'] = opinion_overview.variable.str.replace('opinions_' , '')
     opinion_grouped = opinion_overview.groupby('variable').mean().reset_index()
     opinion_grouped.variable = opinion_grouped.variable.astype(float)
     if n_iterations>1:
@@ -443,7 +444,7 @@ def double_plot(input_frame,T,allocation,n_iterations,scale_to_complete,importan
     opinion_75 = pd.merge(opinion_75 ,final_opinions,on=['iteration','id'],how='left')
     opinion_75.value.fillna(opinion_75.value_fill,inplace=True)
     opinion_75 = opinion_75.drop('value_fill',axis=1)
-    opinion_75['variable'] = opinion_75.variable.str.replace('opinions_?' , '')
+    opinion_75['variable'] = opinion_75.variable.str.replace('opinions_' , '')
     opinion_75.variable = opinion_75.variable.astype(float)
     # want to group by variable, order by value, and find 25 and 75 values
     #lq=opinion_75.groupby('variable').quantile(0.25).reset_index().sort_values('variable')
@@ -457,6 +458,7 @@ def double_plot(input_frame,T,allocation,n_iterations,scale_to_complete,importan
     opinion_grouped['uq'] = opinion_grouped['Average opinion']+opinion_grouped['sd']
     if len(exp_asymptote)!=opinion_grouped.shape[0]:
         exp_asymptote.append(exp_asymptote[len(exp_asymptote)-1])
+        
     opinion_grouped['expert']=exp_asymptote[0:opinion_grouped.shape[0]]
     
     if scale_to_complete:
@@ -645,7 +647,7 @@ def fit_exp_to_O(data,pad_0,scale_to_100,method,importance):
 
 def opinion_analysis(data,experts,expert_input,n_iterations,extreme_index):
     opinion_overview = pd.melt(data[[col for col in data if col.startswith(('opinions_','iteration','id'))]],id_vars=['iteration','id'])
-    opinion_overview['variable'] = opinion_overview.variable.str.replace('opinions_?' , '')
+    opinion_overview['variable'] = opinion_overview.variable.str.replace('opinions_' , '')
     opinion_overview.variable = opinion_overview.variable.astype(float)
     # what is the maximal round number?
     max_round = max(opinion_overview.variable)
