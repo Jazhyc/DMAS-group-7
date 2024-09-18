@@ -485,14 +485,18 @@ def double_plot(input_frame,T,allocation,n_iterations,scale_to_complete,importan
     
     print("Plot 4 three-quarters complete")
     
-    exp_asymptote_copy = exp_asymptote.copy()
-    
-    # Keep on extending expert asymptote until end of data, fill with last value
-    if len(exp_asymptote_copy) < opinion_grouped.shape[0]:
-        while len(exp_asymptote_copy) != opinion_grouped.shape[0]: 
-            exp_asymptote_copy.append(exp_asymptote_copy[-1])
-    elif len(exp_asymptote_copy) >= opinion_grouped.shape[0]:
-        exp_asymptote_copy = exp_asymptote_copy[:opinion_grouped.shape[0]]
+    if type(exp_asymptote) == int:
+        exp_asymptote_copy = [exp_asymptote]*opinion_grouped.shape[0]
+        
+    else:
+        exp_asymptote_copy = exp_asymptote.copy()
+        
+        # Keep on extending expert asymptote until end of data, fill with last value
+        if len(exp_asymptote_copy) < opinion_grouped.shape[0]:
+            while len(exp_asymptote_copy) != opinion_grouped.shape[0]: 
+                exp_asymptote_copy.append(exp_asymptote_copy[-1])
+        elif len(exp_asymptote_copy) >= opinion_grouped.shape[0]:
+            exp_asymptote_copy = exp_asymptote_copy[:opinion_grouped.shape[0]]
     
     opinion_grouped['expert']=exp_asymptote_copy[0:opinion_grouped.shape[0]]
     
@@ -853,7 +857,8 @@ def kde_plot(opinions,title,legend_status):
     plt.ylabel('Density')
     plt.ylim(0,0.5)
     # fix ylim at 0, 0.5
-    
+    plt.show()
+    plt.close()
 
 
 

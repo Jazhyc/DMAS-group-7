@@ -254,7 +254,7 @@ opinion_analysis(bimodes,True,experts_periodic,n_iterations,extreme_index)
 
 # investigation of multimodality
 multi_modes = avg_over_trials(input_data,T,prop_opm,opinions_bimodal,allocation,demog_cols,rho,C,O,n_iterations,opinions_update,exp_included,
-                              experts_extreme,0.1,0.1,'DeGroot',True,0.02,O2,False,0)
+                              experts_extreme,0.1,0.1,'DeGroot',True,0.02,O2,False,0) # Why is the asymptote a constant?
 double_plot(multi_modes,T,'opt',n_iterations,True,True,0)
 opinion_analysis(multi_modes,True,experts_random,n_iterations,extreme_index)
 
@@ -312,6 +312,10 @@ for exp in exp_values:
         trial += 1
 
 output_3 = pd.DataFrame(final_data_3).transpose().reset_index()
+
+kde_plot(output_3,"Opinion Density Plot",True)
+
+exit()
 
 #######################
 ###### FIT TO CAS
