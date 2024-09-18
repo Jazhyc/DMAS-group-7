@@ -13,6 +13,7 @@ import numpy as np
 import pandas as pd
 import random
 from random import seed
+from tqdm import tqdm
 seed(1)
 import matplotlib.pyplot as plt
 
@@ -84,6 +85,7 @@ exp_included = True
 # initialise expert - always presents evidence for 7 (to be updated)
 exp_opinion = 7
 exp_opinion_array = np.round(np.random.uniform(low=6,high=8,size=200))
+
 exp_weight = 0.1
 movement_speed = 0.1
 mode = "DeGroot" # "bounded_confidence"
@@ -113,7 +115,7 @@ a = sim_trial(opt_protocol,50,prop_opm,opinions_base,'opt',demog_cols,rho,C,O,
 
 exp_asymptote = [6,8]
 
-double_plot(a,50,'opt',1,True,True,exp_asymptote)
+# double_plot(a,50,'opt',1,True,True,exp_asymptote)
 
 extremists = True
 extreme_index = random.sample(range(N_STRONG_NODES_I),20)
@@ -124,7 +126,7 @@ a1 = avg_over_trials(opt_protocol,20,prop_opm,opinions_base,allocation,demog_col
                     OPM_to_CM,pt,O2,
                     False,0)
 
-double_plot(a1,50,'opt',n_iterations,True,True,exp_asymptote)
+# double_plot(a1,50,'opt',n_iterations,True,True,exp_asymptote)
 
 # 4 visualise output
 
@@ -137,7 +139,7 @@ allocation='opt'
 n_iterations=1
 scale_to_complete=True
 
-double_plot(a1,20,'opt',5,True,True,exp_asymptote)
+# double_plot(a1,20,'opt',5,True,True,exp_asymptote)
 
 # Experts: random, central, extreme, switching between extremes periodically, none
 n_iterations = 10
@@ -146,6 +148,8 @@ experts_random = np.random.choice(np.arange(0,10),size=200)
 experts_central = np.array(random.choices([3,4,5,6],[0.125,0.375,0.375,0.125],k=200))
 experts_extreme = np.repeat(8,200)
 experts_periodic = np.tile(np.concatenate((np.repeat(1,5),np.repeat(8,5))),20)
+
+print("Accounting for randomisation in expert trials")
 # need to account for randomisation in CAS trials
 for i in range(n_iterations): # a row for each iteration
     if i == 0:
@@ -188,7 +192,7 @@ O2=7
 # variable: extreme_index = range(20) (x_x_x_commit_x) or 0 otherwise
 # naming convention: opinion model_experts_exp_weight_initial opinions_opm used
 
-paradigm_values = {'dg':"DeGroot",'bc':"bounded confidence"}
+paradigm_values = {'dg':"DeGroot"} # 'bc':"bounded confidence"
 exp_values = {'random':experts_random_update,'extrem':experts_extreme_update,'periodic':experts_periodic_update}
 participant_values = {'random':[opinions_base,False,0],'bipart':[opinions_bimodal,False,0],'extrem':[opinions_extreme,True,extreme_index]}
 speed_values = {'slower':[0.075,0.075]}
@@ -234,9 +238,10 @@ opinion_analysis(multi_modes,True,experts_random,n_iterations,extreme_index)
 
 # FIGURES FOR LATEX
 # one bad trial - BC, extreme, bipartisan
-latex_plot_bad = avg_over_trials(opt_protocol,200,0.1,opinions_bimodal,'opt',['a'],rho,C,O,n_iterations,True,True,
-                                 experts_extreme_update,0.075,0.075,'bounded confidence',False,0.001,7,False,0)
-double_plot(latex_plot_bad,200,'opt',n_iterations,True,True,experts_extreme_update[1])
+# latex_plot_bad = avg_over_trials(opt_protocol,200,0.1,opinions_bimodal,'opt',['a'],rho,C,O,n_iterations,True,True,
+#                                  experts_extreme_update,0.075,0.075,'bounded confidence',False,0.001,7,False,0)
+# double_plot(latex_plot_bad,200,'opt',n_iterations,True,True,experts_extreme_update[1])
+
 # also want to see multimodality - run through opinion_analysis code
 latex_plot_good = avg_over_trials(opt_protocol,200,0.1,opinions_bimodal,'opt',['a'],rho,C,O,n_iterations,True,True,
                                  experts_extreme_update,0.075,0.075,'DeGroot',True,0.001,7,False,0)

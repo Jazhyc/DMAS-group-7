@@ -12,6 +12,7 @@ from random import seed
 seed(1)
 import matplotlib.pyplot as plt
 import seaborn as sns
+import copy
 
 # number of strong nodes - fixed at 20%
 N_STRONG_NODES_I = 100
@@ -240,6 +241,7 @@ def sim_trial(input_data,T,prop_opm,opinions_base,allocation,demog_cols,rho,C,O,
     # simulate the run T times to get average behaviour
     data_update = create_data(input_data,T,prop_opm,opinions_base,allocation,demog_cols,
                               extremists,extreme_index)
+    
     #print(data_update.columns)
     for t in range(T):
         #print(t)
@@ -247,6 +249,7 @@ def sim_trial(input_data,T,prop_opm,opinions_base,allocation,demog_cols,rho,C,O,
         data_update = round_update(data_update,t+1,demog_cols,rho,C,O,
                                    opinions_update,exp_included,exp_opinion_array[t],exp_weight,movement_speed,mode,
                                    OPM_to_CM,pt,O2)
+        
         if(sum(data_update.OPM_to_CM_trigger)==N_STRONG_NODES_I):
             #print(sum(data_update.OPM_to_CM_trigger))
             break
@@ -258,8 +261,10 @@ def avg_over_trials(input_data,T,prop_opm,opinions_base,allocation,demog_cols,rh
                     extremists,extreme_index):
     for i in range(n_iterations):
         #print("Iteration: "+str(i))
+        
+        # Change: Pass whole expert opinion array instead of just one value
         temp_data = sim_trial(input_data,T,prop_opm,opinions_base,allocation,demog_cols,rho,C,O,
-                              opinions_update,exp_included,exp_opinion_array[i],exp_weight,movement_speed,mode,
+                              opinions_update,exp_included,exp_opinion_array,exp_weight,movement_speed,mode,
                               OPM_to_CM,pt,O2,
                               extremists,extreme_index)
         temp_data['iteration']=i
@@ -334,7 +339,10 @@ def double_plot(input_frame,T,allocation,n_iterations,scale_to_complete,importan
         plt.xlabel('% of rounds until convergence')
     else:
         plt.xlabel('# rounds')
+        
+    print("Plot 1 complete")
     plt.show()
+    plt.close()
     
     # 4b: how many because of prob
     if importance:
@@ -399,7 +407,11 @@ def double_plot(input_frame,T,allocation,n_iterations,scale_to_complete,importan
     else:
         plt.xlabel('# rounds')
     plt.xlim(0,x_lim)
+    
+    print("Plot 2 complete")
     plt.show()
+    plt.close()
+    
     plt.plot(prob_grouped['Round'], prob_grouped['pt_csum']/n_iterations, '--', label = "R", color="red")
     plt.plot(prob_grouped['Round'], prob_grouped['O2_csum']/n_iterations, '--', label = "O'",color="orange")
     #plt.plot(prob_grouped['Round'], prob_grouped['B_csum']/n_iterations, '--', label = "B",color="blue")
@@ -415,7 +427,10 @@ def double_plot(input_frame,T,allocation,n_iterations,scale_to_complete,importan
     else:
         plt.xlabel('# rounds')
     plt.xlim(0,x_lim)
+    
+    print("Plot 3 complete")
     plt.show()
+    plt.close()
     
     # 4c: add in opinion shift - just average opinions? Don't want to truncate by time step
     opinion_overview = pd.melt(input_frame[[col for col in input_frame if col.startswith(('opinions_','iteration','id'))]],id_vars=['iteration','id'])
@@ -439,6 +454,8 @@ def double_plot(input_frame,T,allocation,n_iterations,scale_to_complete,importan
     opinion_grouped = opinion_grouped.sort_values('variable').reset_index()[['variable','value']]
     opinion_grouped.columns=['Round','Average opinion']
     
+    print("Plot 4 half complete")
+    
     # add 75% bars
     opinion_75 = pd.melt(input_frame[[col for col in input_frame if col.startswith(('opinions_','iteration','id'))]],id_vars=['iteration','id'])
     opinion_75 = pd.merge(opinion_75 ,final_opinions,on=['iteration','id'],how='left')
@@ -457,11 +474,15 @@ def double_plot(input_frame,T,allocation,n_iterations,scale_to_complete,importan
     opinion_grouped['lq'] = opinion_grouped['Average opinion']-opinion_grouped['sd']
     opinion_grouped['uq'] = opinion_grouped['Average opinion']+opinion_grouped['sd']
     
-    # Keep on extending expert asymptote until end of data, fill with last value
-    while len(exp_asymptote) != opinion_grouped.shape[0]: 
-        exp_asymptote.append(exp_asymptote[-1])
+    print("Plot 4 three-quarters complete")
     
-    opinion_grouped['expert']=exp_asymptote[0:opinion_grouped.shape[0]]
+    exp_asymptote_copy = exp_asymptote.copy()
+    
+    # Keep on extending expert asymptote until end of data, fill with last value
+    while len(exp_asymptote_copy) != opinion_grouped.shape[0]: 
+        exp_asymptote_copy.append(exp_asymptote_copy[-1])
+    
+    opinion_grouped['expert']=exp_asymptote_copy[0:opinion_grouped.shape[0]]
     
     if scale_to_complete:
         opinion_grouped.Round = 100*opinion_grouped['Round']/time_to_consensus
@@ -470,7 +491,7 @@ def double_plot(input_frame,T,allocation,n_iterations,scale_to_complete,importan
     # need to add 75% error bars
     plt.plot(opinion_grouped['Round'],opinion_grouped['lq'],'--',color='blue')
     plt.plot(opinion_grouped['Round'],opinion_grouped['uq'],'--',color='blue')
-    if exp_asymptote != "-":
+    if exp_asymptote_copy != "-":
         plt.plot(opinion_grouped['Round'],opinion_grouped['expert'],linestyle="",marker = "o")
     if n_iterations>1:
         plt.errorbar(opinion_grouped['Round'],opinion_grouped['Average opinion'],yerr=opinion_error_values['num'],color="red")
@@ -491,7 +512,10 @@ def double_plot(input_frame,T,allocation,n_iterations,scale_to_complete,importan
     else:
         plt.xlabel('t')
     plt.xlim(0,x_lim)
+    
+    print("Plot 4 complete")
     plt.show()
+    plt.close()
     
     # final plot - all OPM on a single view
     # a
@@ -541,6 +565,8 @@ def double_plot(input_frame,T,allocation,n_iterations,scale_to_complete,importan
     else:
         plt.xlabel('# rounds')
     plt.xlim(0,x_lim)
+    
+    print("Plot 5 complete")
     plt.show()
     
     
