@@ -102,7 +102,9 @@ def opm_update(data,round_no,table_no,demog_cols,rho,C,O,opinions_update,
     table_col = 'allocation_'+str(round_no)
     opinion_col = 'opinions_'+str(round_no-1)
     new_opinion_col = 'opinions_'+str(round_no)
-    table=data.loc[data[table_col]==table_no][['id',table_col,opm_status_col,opinion_col,'first_rho','first_O','first_pt','first_O2','OPM_to_CM_trigger'] + demog_cols]
+    
+    table=data.loc[data[table_col]==table_no][['id',table_col,opm_status_col,opinion_col,'first_rho','first_O','first_pt','first_O2','OPM_to_CM_trigger'] + demog_cols]   
+    
     table[new_opm_status_col] = table[opm_status_col]
     table['prior_open'] = table[opm_status_col]
     table[new_opinion_col] = table[opinion_col]
@@ -240,7 +242,7 @@ def sim_trial(input_data,T,prop_opm,opinions_base,allocation,demog_cols,rho,C,O,
               extremists,extreme_index):
     # simulate the run T times to get average behaviour
     data_update = create_data(input_data,T,prop_opm,opinions_base,allocation,demog_cols,
-                              extremists,extreme_index)
+                              extremists,extreme_index)    
     
     #print(data_update.columns)
     for t in range(T):
@@ -259,12 +261,19 @@ def avg_over_trials(input_data,T,prop_opm,opinions_base,allocation,demog_cols,rh
                     opinions_update,exp_included,exp_opinion_array,exp_weight,movement_speed,mode,
                     OPM_to_CM,pt,O2,
                     extremists,extreme_index):
+    
     for i in range(n_iterations):
         #print("Iteration: "+str(i))
         
+        # Check if expert opinion array is a list of lists
+        if type(exp_opinion_array[0]) == list:
+            exp_opinion = exp_opinion_array[i]
+        else:
+            exp_opinion = exp_opinion_array
+        
         # Change: Pass whole expert opinion array instead of just one value
         temp_data = sim_trial(input_data,T,prop_opm,opinions_base,allocation,demog_cols,rho,C,O,
-                              opinions_update,exp_included,exp_opinion_array,exp_weight,movement_speed,mode,
+                              opinions_update,exp_included,exp_opinion,exp_weight,movement_speed,mode,
                               OPM_to_CM,pt,O2,
                               extremists,extreme_index)
         temp_data['iteration']=i
@@ -696,7 +705,10 @@ def opinion_analysis(data,experts,expert_input,n_iterations,extreme_index):
     # no rows for those whose opinions never changed - need to treat differently if commited minority
     # merge on actual opinion
     last_opinions_merge = pd.merge(last_opinions_merge,last_opinion_reached[['iteration','id','variable','value']],on=['iteration','id','variable'],how='left')[['iteration','id','variable','value','type']]
-    bound_opinions = bound_opinions.append(last_opinions_merge,ignore_index=True)
+    
+    # Update from append to concat
+    bound_opinions = pd.concat([bound_opinions, last_opinions_merge], ignore_index=True)
+    
     # add rows for those whose opinions never changed
     no_change = bound_opinions.groupby(['id','iteration']).count().reset_index()
     no_change_ind = no_change.loc[no_change.type==2][['id','iteration']]
@@ -720,7 +732,10 @@ def opinion_analysis(data,experts,expert_input,n_iterations,extreme_index):
     first_opinions_check.loc[first_opinions_check.variable == first_opinions_check.last_vbl,"variable"] = 0
     # merge on actual opinion
     first_opinions_merge = pd.merge(first_opinions_check[['iteration','id','variable','type']],first_opinion_reached[['iteration','id','variable','value']],on=['iteration','id','variable'],how='left')[['iteration','id','variable','value','type']]
-    bound_opinions = bound_opinions.append(first_opinions_merge,ignore_index=True)
+
+    # use concat instead
+    bound_opinions = pd.concat([bound_opinions, first_opinions_merge], ignore_index=True)
+    
     # add rows for those whose opinions never changed
     no_change = bound_opinions.groupby(['id','iteration']).count().reset_index()
     no_change_ind = no_change.loc[no_change.type==3][['id','iteration']]
@@ -770,14 +785,20 @@ def opinion_analysis(data,experts,expert_input,n_iterations,extreme_index):
         modal_data = bound_opinions.loc[(bound_opinions.type=='Last') & (~bound_opinions.id.isin(extreme_index))]
     # plot modal data as sense check if needed
     #sns.distplot(modal_data['value'], hist=False, kde=True,bins=int(1800/5), color = 'darkblue', hist_kws={'edgecolor':'black'},kde_kws={'linewidth': 4})
-    data = np.msort(modal_data['value'])
+    
+    # replace msort with sort and axis=0
+    data = np.sort(modal_data['value'], axis=0)
+    
     intervals = UniDip(data).run()
     # the bounds of each peak
     R4 = len(intervals)
     # is this always the mode?
     modes = []
     for iteration in range(n_iterations):
-        iter_modal_data = np.msort(modal_data.loc[modal_data.iteration==iteration]['value'])
+        
+        # replaced msort again
+        iter_modal_data = np.sort(modal_data.loc[modal_data.iteration==iteration]['value'], axis=0)
+        
         intervals = UniDip(iter_modal_data).run()
         modes.append(len(intervals))
     individual_mode_count = len([x for x in modes if x==R4]) 

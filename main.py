@@ -23,6 +23,7 @@ pd.options.mode.chained_assignment = None  # default='warn'
 
 warnings.simplefilter(action='ignore', category=pd.errors.PerformanceWarning)
 warnings.simplefilter(action='ignore', category=FutureWarning)
+
 #random.Random(3)
 
 # SIMULATION STEPS
