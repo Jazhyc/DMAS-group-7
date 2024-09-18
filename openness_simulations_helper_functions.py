@@ -13,6 +13,9 @@ seed(1)
 import matplotlib.pyplot as plt
 import seaborn as sns
 
+# number of strong nodes - fixed at 20%
+N_STRONG_NODES_I = 100
+N_STRONG_NODES_J=10
 
 #!pip install unidip
 from unidip import UniDip
@@ -49,7 +52,7 @@ def create_data(input_data,T,prop_opm,opinions_base,allocation,demog_cols,extrem
 
     #base_data = pd.concat([base_data,opinions_base],axis=1)
     base_data['opinions_0'] = opinions_base
-    opm_0 = random.choices([0,1],weights=[1-prop_opm,prop_opm],k=n_i)
+    opm_0 = random.choices([0,1],weights=[1-prop_opm,prop_opm],k=N_STRONG_NODES_I)
     opm_base = pd.DataFrame(opm_0,columns=["opm_0"])
     base_data = pd.concat([base_data,opm_base],axis=1)
     # participants can have status 0 (closed, always been closed), 1 (open), and 2 (closed, having previously been open)
@@ -211,7 +214,7 @@ def round_update(data,round_no,demog_cols,rho,C,O,
                  opinions_update,exp_included,exp_opinion,exp_weight,movement_speed,mode,
                  OPM_to_CM,pt,O2):
     #print("generating for round "+str(round_no))
-    for table_no in range(n_j):
+    for table_no in range(N_STRONG_NODES_J):
         #print("table "+str(table_no))
         new_opm = opm_update(data,round_no,table_no,demog_cols,rho,C,O,
                              opinions_update, exp_included, exp_opinion, exp_weight, movement_speed,mode,
@@ -244,7 +247,7 @@ def sim_trial(input_data,T,prop_opm,opinions_base,allocation,demog_cols,rho,C,O,
         data_update = round_update(data_update,t+1,demog_cols,rho,C,O,
                                    opinions_update,exp_included,exp_opinion_array[t],exp_weight,movement_speed,mode,
                                    OPM_to_CM,pt,O2)
-        if(sum(data_update.OPM_to_CM_trigger)==n_i):
+        if(sum(data_update.OPM_to_CM_trigger)==N_STRONG_NODES_I):
             #print(sum(data_update.OPM_to_CM_trigger))
             break
     return(data_update)
@@ -319,7 +322,7 @@ def double_plot(input_frame,T,allocation,n_iterations,scale_to_complete,importan
     if n_iterations>1:
         plt.errorbar(opm_grouped['Round'],opm_grouped['Cumulative OPM'],yerr=opm_error_values['num'])
     #plt.title('Cumulative OPM by round for table allocation setting: '+str(allocation))
-    plt.ylim(0,n_i)
+    plt.ylim(0,N_STRONG_NODES_I)
     plt.ylabel('cumulative # agents with OPM status 1')
     if scale_to_complete:
         x_lim = 100
@@ -385,7 +388,7 @@ def double_plot(input_frame,T,allocation,n_iterations,scale_to_complete,importan
     plt.plot(prob_grouped['Round'], prob_grouped['O_csum']/n_iterations, label = "O",color="orange")
     plt.legend()
     #plt.title('Influence of different OPM rules for table allocation setting: '+str(allocation))
-    plt.ylim(0, n_i)
+    plt.ylim(0, N_STRONG_NODES_I)
     if(importance):
         plt.ylabel('cumulative # agents becoming OPM due to each rule')
     else:
@@ -401,7 +404,7 @@ def double_plot(input_frame,T,allocation,n_iterations,scale_to_complete,importan
     #plt.plot(prob_grouped['Round'], prob_grouped['B_csum']/n_iterations, '--', label = "B",color="blue")
     plt.legend()
     #plt.title('Influence of different CM rules for table allocation setting: '+str(allocation))
-    plt.ylim(0, n_i)
+    plt.ylim(0, N_STRONG_NODES_I)
     if(importance):
         plt.ylabel('cumulative # agents becoming CPM due to each rule')
     else:
@@ -493,7 +496,7 @@ def double_plot(input_frame,T,allocation,n_iterations,scale_to_complete,importan
         plt.errorbar(opm_grouped['Round'],opm_grouped['Cumulative OPM'],yerr=opm_error_values['num'],color='orange',label='# agents OPM')
     #plt.title('Cumulative OPM by round for table allocation setting: '+str(allocation))
     plt.legend()
-    plt.ylim(0,n_i)
+    plt.ylim(0,N_STRONG_NODES_I)
     if scale_to_complete:
         x_lim = 100
     else:
@@ -509,7 +512,7 @@ def double_plot(input_frame,T,allocation,n_iterations,scale_to_complete,importan
     plt.plot(prob_grouped['Round'], prob_grouped['O_csum']/n_iterations, label = "O",color="orange")
     plt.legend()
     #plt.title('Influence of different OPM rules for table allocation setting: '+str(allocation))
-    plt.ylim(0, n_i)
+    plt.ylim(0, N_STRONG_NODES_I)
     if(importance):
         plt.ylabel('cumulative # agents becoming OPM due to each rule')
     else:
@@ -524,7 +527,7 @@ def double_plot(input_frame,T,allocation,n_iterations,scale_to_complete,importan
     #plt.plot(prob_grouped['Round'], prob_grouped['B_csum']/n_iterations, '--', label = "B",color="blue")
     plt.legend()
     #plt.title('Influence of different CM rules for table allocation setting: '+str(allocation))
-    plt.ylim(0, n_i)
+    plt.ylim(0, N_STRONG_NODES_I)
     if(importance):
         plt.ylabel('cumulative # agents')
     else:

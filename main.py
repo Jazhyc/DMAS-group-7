@@ -28,9 +28,9 @@ warnings.simplefilter(action='ignore', category=FutureWarning)
 
 # 1 initialise parameters
 
-# number of strong nodes - fixed at 20%
-n_i = 100
-n_j=10
+
+
+
 #power_prop = 0.2
 
 # allocation paradigm - fixed, random, opt
@@ -39,7 +39,7 @@ allocation = 'random'
 allocation = 'opt'
 
 # parameters for rules - O, G, p
-O = np.round(n_j/2) # group sway
+O = np.round(N_STRONG_NODES_J/2) # group sway
 # rho: parameter for importance of diversity
 rho = 0.5
 
@@ -111,10 +111,12 @@ a = sim_trial(opt_protocol,50,prop_opm,opinions_base,'opt',demog_cols,rho,C,O,
               opinions_update,exp_included,exp_opinion_array,exp_weight,movement_speed,mode,
               OPM_to_CM,pt,O2,False,0)
 
+exp_asymptote = [6,8]
+
 double_plot(a,50,'opt',1,True,True,exp_asymptote)
 
 extremists = True
-extreme_index = random.sample(range(n_i),20)
+extreme_index = random.sample(range(N_STRONG_NODES_I),20)
 
 n_iterations = 5
 a1 = avg_over_trials(opt_protocol,20,prop_opm,opinions_base,allocation,demog_cols,rho,C,O,n_iterations,
@@ -134,13 +136,12 @@ T=20
 allocation='opt'
 n_iterations=1
 scale_to_complete=True
-exp_asymptote = [6,8]
 
 double_plot(a1,20,'opt',5,True,True,exp_asymptote)
 
 # Experts: random, central, extreme, switching between extremes periodically, none
 n_iterations = 10
-extreme_index = random.sample(range(n_i),20)
+extreme_index = random.sample(range(N_STRONG_NODES_I),20)
 experts_random = np.random.choice(np.arange(0,10),size=200)
 experts_central = np.array(random.choices([3,4,5,6],[0.125,0.375,0.375,0.125],k=200))
 experts_extreme = np.repeat(8,200)
@@ -158,7 +159,7 @@ for i in range(n_iterations): # a row for each iteration
       
 # Participants: random opinions, bipartisan opinions,commited extremists
 opinions_bimodal = opinions_base.copy()
-opinions_bimodal['opinions_0'] = np.array(random.choices([0,1,2,7,8,9],k=n_i))
+opinions_bimodal['opinions_0'] = np.array(random.choices([0,1,2,7,8,9],k=N_STRONG_NODES_I))
 opinions_extreme = opinions_base.copy()
 opinions_extreme.loc[extreme_index[0:10]]=0
 opinions_extreme.loc[extreme_index[11:20]]=9
@@ -428,8 +429,8 @@ input_data[allocation_cols] = input_data[allocation_cols].apply(pd.to_numeric)
 input_data[allocation_cols] = input_data[allocation_cols].sub(1)
 
 
-n_i = input_data.shape[0]
-n_j = 12  # from CAS data
+N_STRONG_NODES_I = input_data.shape[0]
+N_STRONG_NODES_J = 12  # from CAS data
 
 # PART 4: initialise opinions
 # for each question, randomly sample from the relevant first survey answers
@@ -441,7 +442,7 @@ for question in  np.unique(expert_use.Question):
     sample_data = sample_data[sample_data<99]
     sample_data = 9/5*sample_data
     # want to sample n_i of these
-    sampled_data = np.random.choice(sample_data,size=n_i,replace=True)
+    sampled_data = np.random.choice(sample_data,size=N_STRONG_NODES_I,replace=True)
     opinions_dict[question] = sampled_data
 
 
