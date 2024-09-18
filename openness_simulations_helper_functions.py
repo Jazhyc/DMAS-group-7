@@ -456,9 +456,11 @@ def double_plot(input_frame,T,allocation,n_iterations,scale_to_complete,importan
     opinion_grouped['sd'] = sd
     opinion_grouped['lq'] = opinion_grouped['Average opinion']-opinion_grouped['sd']
     opinion_grouped['uq'] = opinion_grouped['Average opinion']+opinion_grouped['sd']
-    if len(exp_asymptote)!=opinion_grouped.shape[0]:
-        exp_asymptote.append(exp_asymptote[len(exp_asymptote)-1])
-        
+    
+    # Keep on extending expert asymptote until end of data, fill with last value
+    while len(exp_asymptote) != opinion_grouped.shape[0]: 
+        exp_asymptote.append(exp_asymptote[-1])
+    
     opinion_grouped['expert']=exp_asymptote[0:opinion_grouped.shape[0]]
     
     if scale_to_complete:
