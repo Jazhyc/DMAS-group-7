@@ -193,13 +193,34 @@ O2=7
 # variable: extreme_index = range(20) (x_x_x_commit_x) or 0 otherwise
 # naming convention: opinion model_experts_exp_weight_initial opinions_opm used
 
-paradigm_values = {'dg':"DeGroot"} # 'bc':"bounded confidence"
-exp_values = {'random':experts_random_update,'extrem':experts_extreme_update,'periodic':experts_periodic_update}
-participant_values = {'random':[opinions_base,False,0],'bipart':[opinions_bimodal,False,0],'extrem':[opinions_extreme,True,extreme_index]}
-speed_values = {'slower':[0.075,0.075]}
-opm_values = {'opm':True,'nopm':False}
+paradigm_values = {
+    'dg': "DeGroot",
+    #'bc': "bounded confidence"
+}
 
+exp_values = {
+    'random': experts_random_update,
+    'extrem': experts_extreme_update,
+    'periodic': experts_periodic_update
+}
 
+participant_values = {
+    'random': [opinions_base, False, 0],
+    'bipart': [opinions_bimodal, False, 0],
+    'extrem': [opinions_extreme, True, extreme_index]
+}
+
+speed_values = {
+    'slower': [
+        0.075, 
+        0.075
+    ]
+}
+
+opm_values = {
+    'opm': True,
+    'nopm': False
+}
 
 trial = 0
 for mode in paradigm_values:
@@ -252,13 +273,13 @@ double_plot(latex_plot_good,200,'opt',n_iterations,True,True,experts_extreme_upd
 #NEW PLOTTING FUNCTION - want to display opening and closing distributions
 
 # cycle through relevant parameters of interest
-output = avg_over_trials(input_data,T,prop_opm,
-                         participant_values['bipart'][0],
-                         allocation,demog_cols,rho,C,O,n_iterations,opinions_update,exp_included,
-                         exp_values['periodic'],speed_values['slower'][0],speed_values['slower'][1],'bounded confidence',
-                         True,
-                         pt,O2,
-                         participant_values['bipart'][1],participant_values['bipart'][2])
+# output = avg_over_trials(input_data,T,prop_opm,
+#                          participant_values['bipart'][0],
+#                          allocation,demog_cols,rho,C,O,n_iterations,opinions_update,exp_included,
+#                          exp_values['periodic'],speed_values['slower'][0],speed_values['slower'][1],'bounded confidence',
+#                          True,
+#                          pt,O2,
+#                          participant_values['bipart'][1],participant_values['bipart'][2])
 
 # want to visualise opinions at first and last stage
 # need dataset of opinions at first and last stage

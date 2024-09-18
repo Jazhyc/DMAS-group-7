@@ -488,8 +488,11 @@ def double_plot(input_frame,T,allocation,n_iterations,scale_to_complete,importan
     exp_asymptote_copy = exp_asymptote.copy()
     
     # Keep on extending expert asymptote until end of data, fill with last value
-    while len(exp_asymptote_copy) != opinion_grouped.shape[0]: 
-        exp_asymptote_copy.append(exp_asymptote_copy[-1])
+    if len(exp_asymptote_copy) < opinion_grouped.shape[0]:
+        while len(exp_asymptote_copy) != opinion_grouped.shape[0]: 
+            exp_asymptote_copy.append(exp_asymptote_copy[-1])
+    elif len(exp_asymptote_copy) >= opinion_grouped.shape[0]:
+        exp_asymptote_copy = exp_asymptote_copy[:opinion_grouped.shape[0]]
     
     opinion_grouped['expert']=exp_asymptote_copy[0:opinion_grouped.shape[0]]
     
