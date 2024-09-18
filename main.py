@@ -4,11 +4,8 @@ Created on Wed Oct 19 12:14:57 2022
 
 @author: Jake Barrett
 """
-pd.options.mode.chained_assignment = None  # default='warn'
-import warnings
 
-warnings.simplefilter(action='ignore', category=pd.errors.PerformanceWarning)
-warnings.simplefilter(action='ignore', category=FutureWarning)
+import warnings
 
 # library installs
 import os
@@ -18,6 +15,13 @@ import random
 from random import seed
 seed(1)
 import matplotlib.pyplot as plt
+
+from openness_simulations_helper_functions import *
+
+pd.options.mode.chained_assignment = None  # default='warn'
+
+warnings.simplefilter(action='ignore', category=pd.errors.PerformanceWarning)
+warnings.simplefilter(action='ignore', category=FutureWarning)
 #random.Random(3)
 
 # SIMULATION STEPS
@@ -65,7 +69,7 @@ prop_opm = 0.1
 
 # 2 create dataset from parameters (using code from IP - add in randomised OPM attribute)
     # 2a read in optimised protocol
-os.chdir("C:\\Users\\Jake\\Documents\\PhD\\OPM")
+
 opt_protocol = pd.read_csv('100_20_200_protocol.csv')
 # Data generated through table allocation code - single demographic (a1 or a2), with proportions 0.2 and 0.8
 
