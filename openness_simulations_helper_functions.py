@@ -13,6 +13,7 @@ seed(1)
 import matplotlib.pyplot as plt
 import seaborn as sns
 import copy
+from tqdm import tqdm
 
 # number of strong nodes - fixed at 20%
 N_STRONG_NODES_I = 100
@@ -161,53 +162,117 @@ def opm_update(data,round_no,table_no,demog_cols,rho,C,O,opinions_update,
 # table_data = r1.loc[r1.allocation_1==0]
 # table_data = run_data_0.loc[(run_data_0.allocation_58==4)&(run_data_0.iteration==0)], exp_included=False,exp_weight=0.1,movement_speed=0.1
     
-def opinion_update(table_data,round_no,table_no,exp_included,exp_opinion,exp_weight,movement_speed,mode):
-    #print("updating opinions for expert opinion "+str(exp_opinion)) # these are randomly too high
-    new_opm_status_col = 'opm_status_'+str(round_no)
-    table_col = 'allocation_'+str(round_no)
-    opinion_col = 'opinions_'+str(round_no-1)
-    new_opinion_col = 'opinions_'+str(round_no)
-    table=table_data[['id',table_col,new_opm_status_col,opinion_col]].copy()
-    table[new_opinion_col] = table[opinion_col]
+def opinion_update(table_data, round_no, table_no, exp_included, exp_opinion, exp_weight, movement_speed, mode, nhood=None):
+    """
+    Updates the opinions of agents in a table based on the specified opinion dynamics model.
     
-    # mix with expert - mixing parameter?
-    # ADD IN MODE
-    if mode=="DeGroot":
-        # calculate average opinion (excluding agent)
-        table['total_excl'] = table[opinion_col].sum()-table[opinion_col]
-        table['avg_excl'] = table['total_excl']/(table.shape[0]-1)
+    Parameters:
+    -----------
+    table_data : pd.DataFrame
+        DataFrame containing the agent data. Must include columns for agent IDs, allocation, opm status, and opinions.
+    round_no : int
+        The current round number.
+    table_no : int
+        The current table number (not used in this function but kept for consistency).
+    exp_included : bool
+        Whether expert opinion is included in the opinion update process.
+    exp_opinion : float
+        The expert's opinion value.
+    exp_weight : float
+        The weight given to the expert's opinion (if included).
+    movement_speed : float
+        A parameter that determines how much the agents' opinions move towards the new calculated average.
+    mode : str
+        The mode of opinion dynamics: either "DeGroot" or "bounded confidence".
+    nhood : float, optional
+        The neighborhood radius used in the bounded confidence model. Only required if mode is "bounded confidence".
+    
+    Returns:
+    --------
+    pd.DataFrame
+        A DataFrame with the updated opinions for each agent.
+    
+    Raises:
+    -------
+    ValueError
+        If the mode is not recognized.
+    """
+
+    new_opm_status_col = f'opm_status_{round_no}'
+    table_col = f'allocation_{round_no}'
+    opinion_col = f'opinions_{round_no - 1}'
+    new_opinion_col = f'opinions_{round_no}'
+
+    # Copy necessary columns
+    table = table_data[['id', table_col, new_opm_status_col, opinion_col]].copy()
+    table[new_opinion_col] = table[opinion_col]
+
+    if mode == "DeGroot":
+        # Calculate total opinions and the average excluding self
+        total_opinions = table[opinion_col].sum()
+        table['avg_excl'] = (total_opinions - table[opinion_col]) / (table.shape[0] - 1)
+
+        # Filter rows where new_opm_status_col is 1
+        opm_status_filter = table[new_opm_status_col] == 1
+
         if exp_included:
-            table['avg_with_exp']=exp_weight*exp_opinion+(1-exp_weight)*table['avg_excl']
-            table.loc[table[new_opm_status_col]==1,new_opinion_col] = movement_speed*table.loc[table[new_opm_status_col]==1,'avg_with_exp']+(1-movement_speed)*table.loc[table[new_opm_status_col]==1,opinion_col]
+            # Weighted average with expert opinion
+            table['avg_with_exp'] = exp_weight * exp_opinion + (1 - exp_weight) * table['avg_excl']
+            table.loc[opm_status_filter, new_opinion_col] = (
+                movement_speed * table.loc[opm_status_filter, 'avg_with_exp'] +
+                (1 - movement_speed) * table.loc[opm_status_filter, opinion_col]
+            )
         else:
-            table.loc[table[new_opm_status_col]==1,new_opinion_col] = movement_speed*table.loc[table[new_opm_status_col]==1,'avg_excl']+(1-movement_speed)*table.loc[table[new_opm_status_col]==1,opinion_col]
-    elif mode=="bounded confidence":
-        nhood_sums = []
-        nhood_counts = []
-        # only takes average of weights in neighbourhood - defined globally
-        # DEBUGGING: opinion = 1.058609
-        for opinion in table[opinion_col]:
-            nhood_frame = table.loc[(table[opinion_col]>=(opinion-nhood))&(table[opinion_col]<=(opinion+nhood)),opinion_col]
-            nhood_sum = sum(nhood_frame)
-            nhood_count = len(nhood_frame)
-            # don't weight own opinion, unless there are no others in the neighbourhood
-            if nhood_count >1:
-                nhood_count-=1
-                nhood_sum-=opinion
-            nhood_sums.append(nhood_sum)
-            nhood_counts.append(nhood_count)
-        table['total_nhood_excl'] = nhood_sums
-        table['n_nhood'] = nhood_counts
-        table['avg_excl'] = table['total_nhood_excl']/(table['n_nhood'])
+            # Update opinions without expert
+            table.loc[opm_status_filter, new_opinion_col] = (
+                movement_speed * table.loc[opm_status_filter, 'avg_excl'] +
+                (1 - movement_speed) * table.loc[opm_status_filter, opinion_col]
+            )
+
+    elif mode == "bounded confidence":
+        if nhood is None:
+            raise ValueError("Neighborhood radius (nhood) must be specified for bounded confidence mode.")
+
+        # Vectorized neighborhood calculations
+        opinions = table[opinion_col].values
+        table['total_nhood_excl'] = np.zeros(len(table))
+        table['n_nhood'] = np.zeros(len(table))
+
+        for i, opinion in enumerate(opinions):
+            # Find opinions within the neighborhood
+            in_nhood = np.abs(opinions - opinion) <= nhood
+            nhood_count = in_nhood.sum()
+
+            # Exclude own opinion if neighbors exist
+            if nhood_count > 1:
+                table.loc[i, 'total_nhood_excl'] = opinions[in_nhood].sum() - opinion
+                table.loc[i, 'n_nhood'] = nhood_count - 1
+            else:
+                table.loc[i, 'total_nhood_excl'] = opinions[in_nhood].sum()
+                table.loc[i, 'n_nhood'] = nhood_count
+
+        table['avg_excl'] = table['total_nhood_excl'] / table['n_nhood']
+
         if exp_included:
-            # also need to modify expert - only listen if in neighbourhood
-            table['expert_within_nhood']=np.where((table[opinion_col]>=(exp_opinion-nhood))&(table[opinion_col]<=(exp_opinion+nhood)),1,0)
-            table['avg_with_exp']=table['expert_within_nhood']*(exp_weight*exp_opinion+(1-exp_weight)*table['avg_excl'])+(1-table['expert_within_nhood'])*table['avg_excl']
-            table.loc[table[new_opm_status_col]==1,new_opinion_col] = movement_speed*table.loc[table[new_opm_status_col]==1,'avg_with_exp']+(1-movement_speed)*table.loc[table[new_opm_status_col]==1,opinion_col]
+            # Check if expert is in neighborhood
+            expert_in_nhood = np.abs(exp_opinion - opinions) <= nhood
+            table['avg_with_exp'] = np.where(
+                expert_in_nhood,
+                exp_weight * exp_opinion + (1 - exp_weight) * table['avg_excl'],
+                table['avg_excl']
+            )
+            table.loc[table[new_opm_status_col] == 1, new_opinion_col] = (
+                movement_speed * table['avg_with_exp'] + (1 - movement_speed) * table[opinion_col]
+            )
         else:
-            table.loc[table[new_opm_status_col]==1,new_opinion_col] = movement_speed*table.loc[table[new_opm_status_col]==1,'avg_excl']+(1-movement_speed)*table.loc[table[new_opm_status_col]==1,opinion_col]
+            # Update opinions without expert
+            table.loc[table[new_opm_status_col] == 1, new_opinion_col] = (
+                movement_speed * table['avg_excl'] + (1 - movement_speed) * table[opinion_col]
+            )
+
     else:
-        print("error: mode not specified within DeGroot or bounded confidence (mode = "+str(mode)+")")
+        raise ValueError(f"Unknown mode: {mode}. Must be 'DeGroot' or 'bounded confidence'.")
+
     return table[['id', new_opinion_col]]
 
 
@@ -262,7 +327,7 @@ def avg_over_trials(input_data,T,prop_opm,opinions_base,allocation,demog_cols,rh
                     OPM_to_CM,pt,O2,
                     extremists,extreme_index):
     
-    for i in range(n_iterations):
+    for i in tqdm(range(n_iterations), desc="Iteration"):
         #print("Iteration: "+str(i))
         
         # Check if expert opinion array is a list of lists
