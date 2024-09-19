@@ -14,6 +14,7 @@ import matplotlib.pyplot as plt
 import seaborn as sns
 import copy
 from tqdm import tqdm
+from numba import jit
 
 # number of strong nodes - fixed at 20%
 N_STRONG_NODES_I = 100
@@ -78,12 +79,16 @@ def create_data(input_data,T,prop_opm,opinions_base,allocation,demog_cols,extrem
 
 # need a diversity calculator for second OPM rule. For our simple example, demog_cols is simply ['a'], and as the allocation is optimised there
 # is identical diversity per table per round
-def diverse_calc(table,demog_cols,rho,C):
-    # want to return a scalar value based on the diversity of the table
-    P_values = table.groupby(demog_cols).count().reset_index()['prior_open']/table.shape[0] # prior_open used as an index - could use any col
-    # using NGV diversity metric
-    NGV = C*(1-sum([x**2 for x in P_values]))/(C-1)
-    return rho*NGV
+
+def diverse_calc(table, demog_cols, rho, C):
+    # Calculate the proportion of each group
+    P_values = table.groupby(demog_cols).size() / len(table)
+    
+    # Calculate the NGV diversity metric
+    NGV = C * (1 - sum(P_values ** 2)) / (C - 1)
+    
+    # Return the product of rho and NGV
+    return rho * NGV
 
 
 # testing pt rule
@@ -93,78 +98,144 @@ def diverse_calc(table,demog_cols,rho,C):
 #round_no = 1
 #table_no = 1
 
-def opm_update(data,round_no,table_no,demog_cols,rho,C,O,opinions_update,
-               exp_included,exp_opinion,exp_weight,movement_speed,mode,
-               OPM_to_CM,pt,O2):
-    # Here we can define and re-define rules of OPM updating
-    # function takes current OPM levels for a table, runs through rules, and outputs new OPM
-    opm_status_col = 'opm_status_'+str(round_no-1)
-    new_opm_status_col = 'opm_status_'+str(round_no)
-    table_col = 'allocation_'+str(round_no)
-    opinion_col = 'opinions_'+str(round_no-1)
-    new_opinion_col = 'opinions_'+str(round_no)
-    
-    table=data.loc[data[table_col]==table_no][['id',table_col,opm_status_col,opinion_col,'first_rho','first_O','first_pt','first_O2','OPM_to_CM_trigger'] + demog_cols]   
-    
-    table[new_opm_status_col] = table[opm_status_col]
-    table['prior_open'] = table[opm_status_col]
+import numpy as np
+import random
+
+def opm_update(data, round_no, table_no, demog_cols, rho, C, O, opinions_update, 
+               exp_included, exp_opinion, exp_weight, movement_speed, mode,
+               OPM_to_CM, pt, O2):
+
+    # Define column names
+    opm_status_col = f'opm_status_{round_no-1}'
+    new_opm_status_col = f'opm_status_{round_no}'
+    table_col = f'allocation_{round_no}'
+    opinion_col = f'opinions_{round_no-1}'
+    new_opinion_col = f'opinions_{round_no}'
+
+    # Pre-slice the data to reduce frequent .loc calls
+    table = data.loc[data[table_col] == table_no, ['id', table_col, opm_status_col, opinion_col, 
+                                                   'first_rho', 'first_O', 'first_pt', 'first_O2', 
+                                                   'OPM_to_CM_trigger'] + demog_cols].copy()
+
+    # Batch assignment to minimize multiple operations
+    table[new_opm_status_col] = table['prior_open'] = table[opm_status_col]
     table[new_opinion_col] = table[opinion_col]
-    # CRITERIA 1: encounter more than O who are already open
-    # 1b: if already open, encounter more than O who have become closed (later)
-    if OPM_to_CM: # used now for any OPM
-        no_open = sum(table['prior_open'])
-        if(no_open>=O):
-            # those with status 0 reach status 1
-            table.loc[(table[opm_status_col]==0)&(table['OPM_to_CM_trigger']==0),new_opm_status_col]=1
-            table.loc[table['first_O']==0,'first_O']=round_no
-        # CRITERIA 2: if on a diverse table, higher probability of becoming OPM
-        rho_NGV = diverse_calc(table,demog_cols,rho,C)
-        table['temp_prob']=random.choices([0,1],weights=[1-rho_NGV,rho_NGV],k=table.shape[0])
-        # need to track if already triggered
-        table.loc[table['first_rho']==0,'first_rho']=np.multiply(table.loc[table['first_rho']==0,'temp_prob'],round_no)
-        table.loc[(table[opm_status_col]==0) & (table['temp_prob']==1)&(table['OPM_to_CM_trigger']==0),new_opm_status_col]=1
-        
+
+    # CRITERIA 1: Encounter more than O who are already open
     if OPM_to_CM:
-        # add 'become CM' rules
-        no_open_to_closed = sum(table['OPM_to_CM_trigger'])
-        # if they become opm, opm parameter needs a value - jump to max of [average of those opm, opm_trigger]
-        if(no_open_to_closed >=O2):
-            # those with status 0 reach status 1
-            table.loc[table[opm_status_col]==1,new_opm_status_col]=0
-            table.loc[(table[opm_status_col]==1)&(table['first_O2']==0),'first_O2']=round_no
-        # CRITERIA 2: far from the average opinion
-        # 2b: close to average opinion - need to exclude themselves from average
-        # if they become closed, what influences their level of opm? TODO revisit this, currently set to trigger
-        #table['avg_excl'] = (table[opinion_col].sum()-table[opinion_col])/(table.shape[0]-1)
-        #table['dist_from_avg'] = abs(table[opinion_col]-table['avg_excl'])
-        #table.loc[(table[opm_status_col]==1) & (table['dist_from_avg']<B),new_opm_status_col]=0
-        #table.loc[(table[opm_status_col]==1) & (table['first_B']==0) & (table['dist_from_avg']<B),'first_B']=round_no
-        # CRITERIA 2: small constant probability of becoming open IF NOT ALREADY CM (additive?)
-        # how long have they been OPM?
-        OPM_triggers = table[['first_O','first_rho']]
-        table['OPM_time'] = round_no-np.where(OPM_triggers>0,OPM_triggers,round_no).min(axis=1)
-        table['pt'] = np.array([1-(1/(1+pt*x)) for x in table['OPM_time']])
-        table['temp_prob']=np.array([float(random.choices([1,0],weights=[1-pt,pt],k=1)[0]) for pt in table['pt']])
-        # need to keep track if already triggered pt
-        table.loc[(table[opm_status_col]==1) & (table['first_pt']==0),'first_pt']=np.multiply(1-table.loc[(table[opm_status_col]==1) & (table['first_pt']==0),'temp_prob'],round_no)
-        # only transition if haven't already
-        table.loc[(table[new_opm_status_col]==1)&(table[opm_status_col]==1),new_opm_status_col]=table.loc[(table[new_opm_status_col]==1)&(table[opm_status_col]==1),'temp_prob']
-        # add flag if OPM_to_CM triggered
-        table.loc[(table[opm_status_col]==1)&(table[new_opm_status_col]==0),'OPM_to_CM_trigger']=1
+        no_open = table['prior_open'].sum()
+
+        if no_open >= O:
+            mask = (table[opm_status_col] == 0) & (table['OPM_to_CM_trigger'] == 0)
+            table.loc[mask, new_opm_status_col] = 1
+            table.loc[table['first_O'] == 0, 'first_O'] = round_no
+        
+        # Calculate diversity with demography
+        rho_NGV = diverse_calc(table, demog_cols, rho, C)
+
+        # Use np.random.choice for vectorized operation
+        table['temp_prob'] = np.random.choice([0, 1], size=table.shape[0], p=[1 - rho_NGV, rho_NGV])
+
+        # First rho update
+        mask_first_rho = table['first_rho'] == 0
+        table.loc[mask_first_rho, 'first_rho'] = table.loc[mask_first_rho, 'temp_prob'] * round_no
+
+        # Update OPM status based on temp_prob
+        mask_opm_status = (table[opm_status_col] == 0) & (table['temp_prob'] == 1) & (table['OPM_to_CM_trigger'] == 0)
+        table.loc[mask_opm_status, new_opm_status_col] = 1
+
+    # Criteria 2: Open to Closed transitions
+    if OPM_to_CM:
+        no_open_to_closed = table['OPM_to_CM_trigger'].sum()
+
+        if no_open_to_closed >= O2:
+            # Change from open to closed if O2 conditions met
+            table[new_opm_status_col] = np.where(table[opm_status_col] == 1, 0, table[new_opm_status_col])
+            table['first_O2'] = np.where((table[opm_status_col] == 1) & (table['first_O2'] == 0), round_no, table['first_O2'])
+
+        # Calculate OPM time and probabilities using pt
+        OPM_triggers = table[['first_O', 'first_rho']]
+        table['OPM_time'] = round_no - np.minimum.reduce(np.where(OPM_triggers > 0, OPM_triggers, round_no), axis=1)
+
+        # Calculate 'pt' and probabilities based on OPM_time
+        table['pt'] = 1 - (1 / (1 + pt * table['OPM_time']))
+        table['temp_prob'] = np.array([np.random.choice([1, 0], p=[1 - p, p]) for p in table['pt']], dtype=float)
+
+        # Update first_pt for rows meeting the criteria
+        mask_first_pt = (table[opm_status_col] == 1) & (table['first_pt'] == 0)
+        table['first_pt'] = np.where(mask_first_pt, (1 - table['temp_prob']) * round_no, table['first_pt'])
+
+        # Update OPM status based on temp_prob
+        mask_new_opm_status = (table[new_opm_status_col] == 1) & (table[opm_status_col] == 1)
+        table[new_opm_status_col] = np.where(mask_new_opm_status, table['temp_prob'], table[new_opm_status_col])
+
+        # Update OPM_to_CM_trigger where applicable
+        mask_opm_to_cm_trigger = (table[opm_status_col] == 1) & (table[new_opm_status_col] == 0)
+        table['OPM_to_CM_trigger'] = np.where(mask_opm_to_cm_trigger, 1, table['OPM_to_CM_trigger'])
+
+    # If opinions need to be updated
     if opinions_update:
-        # update opinions according to rules
-        table_new_opinions=opinion_update(table,round_no,table_no,exp_included,exp_opinion,exp_weight,movement_speed,mode)
-        table = table[['id','first_rho','first_O','first_pt','first_O2',opm_status_col,new_opm_status_col,'OPM_to_CM_trigger']].merge(table_new_opinions,how='left',on='id')
-    # return relevant cols
-    return table[['id','first_rho','first_O','first_pt','first_O2',new_opm_status_col,new_opinion_col,'OPM_to_CM_trigger']]
+        # Opinion update logic handled in opinion_update function
+        table_new_opinions = opinion_update(table, round_no, table_no, exp_included, exp_opinion, exp_weight, movement_speed, mode)
+        
+        # Instead of merging, use update to minimize merge overhead
+        table.update(table_new_opinions)
+
+    # Return relevant columns
+    return table[['id', 'first_rho', 'first_O', 'first_pt', 'first_O2', new_opm_status_col, new_opinion_col, 'OPM_to_CM_trigger']]
+
 
 # table_data = table
 # table_data = r1.loc[r1.allocation_1==0]
 # table_data = run_data_0.loc[(run_data_0.allocation_58==4)&(run_data_0.iteration==0)], exp_included=False,exp_weight=0.1,movement_speed=0.1
-    
+
+
+@jit(nopython=True)
+def update_opinions_de_groot(opinions, opm_status, exp_included, exp_opinion, exp_weight, movement_speed):
+    n_agents = len(opinions)
+    total_opinions = np.sum(opinions)
+    avg_excl = (total_opinions - opinions) / (n_agents - 1)
+
+    if exp_included:
+        avg_with_exp = exp_weight * exp_opinion + (1 - exp_weight) * avg_excl
+        new_opinions = np.where(opm_status == 1, movement_speed * avg_with_exp + (1 - movement_speed) * opinions, opinions)
+    else:
+        new_opinions = np.where(opm_status == 1, movement_speed * avg_excl + (1 - movement_speed) * opinions, opinions)
+
+    return new_opinions
+
+@jit(nopython=True)
+def update_opinions_bounded_confidence(opinions, opm_status, exp_included, exp_opinion, exp_weight, movement_speed, nhood):
+    n_agents = len(opinions)
+    new_opinions = opinions.copy()
+
+    for i in range(n_agents):
+        opinion_diff = np.abs(opinions - opinions[i])
+        in_nhood = opinion_diff <= nhood
+
+        nhood_sum = np.sum(opinions[in_nhood])
+        nhood_count = np.sum(in_nhood)
+
+        # Exclude self from neighborhood
+        nhood_sum -= opinions[i]
+        nhood_count -= 1
+
+        if nhood_count > 0:
+            avg_excl = nhood_sum / nhood_count
+        else:
+            avg_excl = opinions[i]
+
+        if exp_included and np.abs(exp_opinion - opinions[i]) <= nhood:
+            avg_with_exp = exp_weight * exp_opinion + (1 - exp_weight) * avg_excl
+            new_opinions[i] = movement_speed * avg_with_exp + (1 - movement_speed) * opinions[i]
+        else:
+            new_opinions[i] = movement_speed * avg_excl + (1 - movement_speed) * opinions[i]
+
+    return new_opinions
+
 def opinion_update(table_data, round_no, table_no, exp_included, exp_opinion, exp_weight, movement_speed, mode, nhood=None):
     """
-    Updates the opinions of agents in a table based on the specified opinion dynamics model.
+    Optimized version of the opinion update function.
     
     Parameters:
     -----------
@@ -195,85 +266,25 @@ def opinion_update(table_data, round_no, table_no, exp_included, exp_opinion, ex
     Raises:
     -------
     ValueError
-        If the mode is not recognized.
+        If the mode is not recognized or if nhood is not provided for bounded confidence mode.
     """
-
     new_opm_status_col = f'opm_status_{round_no}'
-    table_col = f'allocation_{round_no}'
     opinion_col = f'opinions_{round_no - 1}'
     new_opinion_col = f'opinions_{round_no}'
 
-    # Copy necessary columns
-    table = table_data[['id', table_col, new_opm_status_col, opinion_col]].copy()
-    table[new_opinion_col] = table[opinion_col]
+    opinions = table_data[opinion_col].values
+    opm_status = table_data[new_opm_status_col].values
 
     if mode == "DeGroot":
-        # Calculate total opinions and the average excluding self
-        total_opinions = table[opinion_col].sum()
-        table['avg_excl'] = (total_opinions - table[opinion_col]) / (table.shape[0] - 1)
-
-        # Filter rows where new_opm_status_col is 1
-        opm_status_filter = table[new_opm_status_col] == 1
-
-        if exp_included:
-            # Weighted average with expert opinion
-            table['avg_with_exp'] = exp_weight * exp_opinion + (1 - exp_weight) * table['avg_excl']
-            table.loc[opm_status_filter, new_opinion_col] = (
-                movement_speed * table.loc[opm_status_filter, 'avg_with_exp'] +
-                (1 - movement_speed) * table.loc[opm_status_filter, opinion_col]
-            )
-        else:
-            # Update opinions without expert
-            table.loc[opm_status_filter, new_opinion_col] = (
-                movement_speed * table.loc[opm_status_filter, 'avg_excl'] +
-                (1 - movement_speed) * table.loc[opm_status_filter, opinion_col]
-            )
-
+        new_opinions = update_opinions_de_groot(opinions, opm_status, exp_included, exp_opinion, exp_weight, movement_speed)
     elif mode == "bounded confidence":
         if nhood is None:
             raise ValueError("Neighborhood radius (nhood) must be specified for bounded confidence mode.")
-
-        # Vectorized neighborhood calculations
-        opinions = table[opinion_col].values
-        table['total_nhood_excl'] = np.zeros(len(table))
-        table['n_nhood'] = np.zeros(len(table))
-
-        for i, opinion in enumerate(opinions):
-            # Find opinions within the neighborhood
-            in_nhood = np.abs(opinions - opinion) <= nhood
-            nhood_count = in_nhood.sum()
-
-            # Exclude own opinion if neighbors exist
-            if nhood_count > 1:
-                table.loc[i, 'total_nhood_excl'] = opinions[in_nhood].sum() - opinion
-                table.loc[i, 'n_nhood'] = nhood_count - 1
-            else:
-                table.loc[i, 'total_nhood_excl'] = opinions[in_nhood].sum()
-                table.loc[i, 'n_nhood'] = nhood_count
-
-        table['avg_excl'] = table['total_nhood_excl'] / table['n_nhood']
-
-        if exp_included:
-            # Check if expert is in neighborhood
-            expert_in_nhood = np.abs(exp_opinion - opinions) <= nhood
-            table['avg_with_exp'] = np.where(
-                expert_in_nhood,
-                exp_weight * exp_opinion + (1 - exp_weight) * table['avg_excl'],
-                table['avg_excl']
-            )
-            table.loc[table[new_opm_status_col] == 1, new_opinion_col] = (
-                movement_speed * table['avg_with_exp'] + (1 - movement_speed) * table[opinion_col]
-            )
-        else:
-            # Update opinions without expert
-            table.loc[table[new_opm_status_col] == 1, new_opinion_col] = (
-                movement_speed * table['avg_excl'] + (1 - movement_speed) * table[opinion_col]
-            )
-
+        new_opinions = update_opinions_bounded_confidence(opinions, opm_status, exp_included, exp_opinion, exp_weight, movement_speed, nhood)
     else:
         raise ValueError(f"Unknown mode: {mode}. Must be 'DeGroot' or 'bounded confidence'.")
 
-    return table[['id', new_opinion_col]]
+    return pd.DataFrame({'id': table_data['id'], new_opinion_col: new_opinions})
 
 
 round_no=1
