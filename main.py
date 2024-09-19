@@ -313,8 +313,6 @@ for exp in exp_values:
 
 output_3 = pd.DataFrame(final_data_3).transpose().reset_index()
 
-kde_plot(output_3,"Opinion Density Plot",True)
-
 exit()
 
 #######################
