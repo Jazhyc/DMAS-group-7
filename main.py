@@ -246,6 +246,9 @@ for mode in paradigm_values:
 
 output_2 = pd.DataFrame(final_data).transpose().reset_index()
 
+# Till here for speed test
+exit()
+
 # why is there bimodality in periodic, bipart?
 bimodes = avg_over_trials(input_data,T,prop_opm,opinions_bimodal,allocation,demog_cols,rho,C,O,n_iterations,opinions_update,exp_included,
                           experts_periodic_update,0.075,0.075,'DeGroot',True,pt,O2,False,0)
@@ -312,8 +315,6 @@ for exp in exp_values:
         trial += 1
 
 output_3 = pd.DataFrame(final_data_3).transpose().reset_index()
-
-exit()
 
 #######################
 ###### FIT TO CAS

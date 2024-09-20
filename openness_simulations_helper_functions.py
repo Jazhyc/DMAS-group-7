@@ -14,15 +14,13 @@ import matplotlib.pyplot as plt
 import seaborn as sns
 import copy
 from tqdm import tqdm
-from numba import jit
+import diptest
 
 # number of strong nodes - fixed at 20%
 N_STRONG_NODES_I = 100
 N_STRONG_NODES_J=10
 
 #!pip install unidip
-from unidip import UniDip
-import unidip.dip as dip
 
 
 def opm_status(row):
@@ -98,9 +96,6 @@ def diverse_calc(table, demog_cols, rho, C):
 #round_no = 1
 #table_no = 1
 
-import numpy as np
-import random
-
 def opm_update(data, round_no, table_no, demog_cols, rho, C, O, opinions_update, 
                exp_included, exp_opinion, exp_weight, movement_speed, mode,
                OPM_to_CM, pt, O2):
@@ -113,23 +108,30 @@ def opm_update(data, round_no, table_no, demog_cols, rho, C, O, opinions_update,
     new_opinion_col = f'opinions_{round_no}'
 
     # Pre-slice the data to reduce frequent .loc calls
-    table = data.loc[data[table_col] == table_no, ['id', table_col, opm_status_col, opinion_col, 
-                                                   'first_rho', 'first_O', 'first_pt', 'first_O2', 
-                                                   'OPM_to_CM_trigger'] + demog_cols].copy()
+    selected_columns = ['id', table_col, opm_status_col, opinion_col, 
+                        'first_rho', 'first_O', 'first_pt', 'first_O2', 
+                        'OPM_to_CM_trigger'] + demog_cols
 
-    # Batch assignment to minimize multiple operations
-    table[new_opm_status_col] = table['prior_open'] = table[opm_status_col]
-    table[new_opinion_col] = table[opinion_col]
+    table = data.loc[data[table_col] == table_no, selected_columns].copy()
+
+    # Convert to NumPy arrays for faster operations
+    opm_status_values = table[opm_status_col].values
+    opinion_values = table[opinion_col].values
+
+    # Batch assignment using NumPy arrays
+    table[new_opm_status_col] = opm_status_values
+    table['prior_open'] = opm_status_values
+    table[new_opinion_col] = opinion_values
 
     # CRITERIA 1: Encounter more than O who are already open
     if OPM_to_CM:
         no_open = table['prior_open'].sum()
 
         if no_open >= O:
-            mask = (table[opm_status_col] == 0) & (table['OPM_to_CM_trigger'] == 0)
-            table.loc[mask, new_opm_status_col] = 1
-            table.loc[table['first_O'] == 0, 'first_O'] = round_no
-        
+            mask = (table[opm_status_col].values == 0) & (table['OPM_to_CM_trigger'].values == 0)
+            table[new_opm_status_col].values[mask] = 1
+            table['first_O'].values[table['first_O'].values == 0] = round_no
+
         # Calculate diversity with demography
         rho_NGV = diverse_calc(table, demog_cols, rho, C)
 
@@ -137,12 +139,12 @@ def opm_update(data, round_no, table_no, demog_cols, rho, C, O, opinions_update,
         table['temp_prob'] = np.random.choice([0, 1], size=table.shape[0], p=[1 - rho_NGV, rho_NGV])
 
         # First rho update
-        mask_first_rho = table['first_rho'] == 0
-        table.loc[mask_first_rho, 'first_rho'] = table.loc[mask_first_rho, 'temp_prob'] * round_no
+        mask_first_rho = table['first_rho'].values == 0
+        table['first_rho'].values[mask_first_rho] = table['temp_prob'].values[mask_first_rho] * round_no
 
         # Update OPM status based on temp_prob
-        mask_opm_status = (table[opm_status_col] == 0) & (table['temp_prob'] == 1) & (table['OPM_to_CM_trigger'] == 0)
-        table.loc[mask_opm_status, new_opm_status_col] = 1
+        mask_opm_status = (table[opm_status_col].values == 0) & (table['temp_prob'].values == 1) & (table['OPM_to_CM_trigger'].values == 0)
+        table[new_opm_status_col].values[mask_opm_status] = 1
 
     # Criteria 2: Open to Closed transitions
     if OPM_to_CM:
@@ -150,11 +152,13 @@ def opm_update(data, round_no, table_no, demog_cols, rho, C, O, opinions_update,
 
         if no_open_to_closed >= O2:
             # Change from open to closed if O2 conditions met
-            table[new_opm_status_col] = np.where(table[opm_status_col] == 1, 0, table[new_opm_status_col])
-            table['first_O2'] = np.where((table[opm_status_col] == 1) & (table['first_O2'] == 0), round_no, table['first_O2'])
+            mask_open_to_closed = table[opm_status_col].values == 1
+            table[new_opm_status_col].values[mask_open_to_closed] = 0
+            mask_first_O2 = (table[opm_status_col].values == 1) & (table['first_O2'].values == 0)
+            table['first_O2'].values[mask_first_O2] = round_no
 
         # Calculate OPM time and probabilities using pt
-        OPM_triggers = table[['first_O', 'first_rho']]
+        OPM_triggers = table[['first_O', 'first_rho']].values
         table['OPM_time'] = round_no - np.minimum.reduce(np.where(OPM_triggers > 0, OPM_triggers, round_no), axis=1)
 
         # Calculate 'pt' and probabilities based on OPM_time
@@ -162,20 +166,19 @@ def opm_update(data, round_no, table_no, demog_cols, rho, C, O, opinions_update,
         table['temp_prob'] = np.array([np.random.choice([1, 0], p=[1 - p, p]) for p in table['pt']], dtype=float)
 
         # Update first_pt for rows meeting the criteria
-        mask_first_pt = (table[opm_status_col] == 1) & (table['first_pt'] == 0)
-        table['first_pt'] = np.where(mask_first_pt, (1 - table['temp_prob']) * round_no, table['first_pt'])
+        mask_first_pt = (table[opm_status_col].values == 1) & (table['first_pt'].values == 0)
+        table['first_pt'].values[mask_first_pt] = (1 - table['temp_prob'].values[mask_first_pt]) * round_no
 
         # Update OPM status based on temp_prob
-        mask_new_opm_status = (table[new_opm_status_col] == 1) & (table[opm_status_col] == 1)
-        table[new_opm_status_col] = np.where(mask_new_opm_status, table['temp_prob'], table[new_opm_status_col])
+        mask_new_opm_status = (table[new_opm_status_col].values == 1) & (table[opm_status_col].values == 1)
+        table[new_opm_status_col].values[mask_new_opm_status] = table['temp_prob'].values[mask_new_opm_status]
 
         # Update OPM_to_CM_trigger where applicable
-        mask_opm_to_cm_trigger = (table[opm_status_col] == 1) & (table[new_opm_status_col] == 0)
-        table['OPM_to_CM_trigger'] = np.where(mask_opm_to_cm_trigger, 1, table['OPM_to_CM_trigger'])
+        mask_opm_to_cm_trigger = (table[opm_status_col].values == 1) & (table[new_opm_status_col].values == 0)
+        table['OPM_to_CM_trigger'].values[mask_opm_to_cm_trigger] = 1
 
     # If opinions need to be updated
     if opinions_update:
-        # Opinion update logic handled in opinion_update function
         table_new_opinions = opinion_update(table, round_no, table_no, exp_included, exp_opinion, exp_weight, movement_speed, mode)
         
         # Instead of merging, use update to minimize merge overhead
@@ -190,7 +193,7 @@ def opm_update(data, round_no, table_no, demog_cols, rho, C, O, opinions_update,
 # table_data = run_data_0.loc[(run_data_0.allocation_58==4)&(run_data_0.iteration==0)], exp_included=False,exp_weight=0.1,movement_speed=0.1
 
 
-@jit(nopython=True)
+
 def update_opinions_de_groot(opinions, opm_status, exp_included, exp_opinion, exp_weight, movement_speed):
     n_agents = len(opinions)
     total_opinions = np.sum(opinions)
@@ -198,13 +201,13 @@ def update_opinions_de_groot(opinions, opm_status, exp_included, exp_opinion, ex
 
     if exp_included:
         avg_with_exp = exp_weight * exp_opinion + (1 - exp_weight) * avg_excl
-        new_opinions = np.where(opm_status == 1, movement_speed * avg_with_exp + (1 - movement_speed) * opinions, opinions)
+        new_opinions = opinions + opm_status * movement_speed * (avg_with_exp - opinions)
     else:
-        new_opinions = np.where(opm_status == 1, movement_speed * avg_excl + (1 - movement_speed) * opinions, opinions)
+        new_opinions = opinions + opm_status * movement_speed * (avg_excl - opinions)
 
     return new_opinions
 
-@jit(nopython=True)
+
 def update_opinions_bounded_confidence(opinions, opm_status, exp_included, exp_opinion, exp_weight, movement_speed, nhood):
     n_agents = len(opinions)
     new_opinions = opinions.copy()
@@ -284,7 +287,7 @@ def opinion_update(table_data, round_no, table_no, exp_included, exp_opinion, ex
     else:
         raise ValueError(f"Unknown mode: {mode}. Must be 'DeGroot' or 'bounded confidence'.")
 
-    return pd.DataFrame({'id': table_data['id'], new_opinion_col: new_opinions})
+    return {'id': table_data['id'], new_opinion_col: new_opinions}
 
 
 round_no=1
@@ -760,8 +763,15 @@ def fit_exp_to_O(data,pad_0,scale_to_100,method,importance):
 
 
 
-
-
+#! Needs verification
+def get_intervals(data):
+    # Uses diptest to get the lower and upper bounds of the dip test
+    dip, results = diptest.dipstat(data, full_output=True, sort_x=True, allow_zero=True)
+    lower_indices = results['lo']
+    upper_indices = results['hi']
+    
+    intervals = [lower_indices, upper_indices]
+    return intervals
 
 
 
@@ -800,7 +810,8 @@ def opinion_analysis(data,experts,expert_input,n_iterations,extreme_index):
         no_change_ind = pd.merge(no_change_ind,bound_opinions,on=['id','iteration'],how='left')
         no_change_ind = no_change_ind.loc[no_change_ind['type']=="First"]
         no_change_ind['type']="Mid"
-        bound_opinions = bound_opinions.append(no_change_ind,ignore_index=True)
+        bound_opinions = pd.concat([bound_opinions, no_change_ind], ignore_index=True)
+        
     # also want to add first opinion shift - when did they start moving?
     first_opinions = bound_opinions.loc[bound_opinions.type=="First",['iteration','id','value']]
     first_opinions = first_opinions.rename(columns={'value':'first_value'})
@@ -872,7 +883,7 @@ def opinion_analysis(data,experts,expert_input,n_iterations,extreme_index):
     # replace msort with sort and axis=0
     data = np.sort(modal_data['value'], axis=0)
     
-    intervals = UniDip(data).run()
+    intervals = get_intervals(data)
     # the bounds of each peak
     R4 = len(intervals)
     # is this always the mode?
@@ -882,11 +893,15 @@ def opinion_analysis(data,experts,expert_input,n_iterations,extreme_index):
         # replaced msort again
         iter_modal_data = np.sort(modal_data.loc[modal_data.iteration==iteration]['value'], axis=0)
         
-        intervals = UniDip(iter_modal_data).run()
+        intervals = get_intervals(iter_modal_data)
         modes.append(len(intervals))
     individual_mode_count = len([x for x in modes if x==R4]) 
+    
+    # Trying to convert to numeric, required in latest version of pandas
+    bound_opinions['value'] = pd.to_numeric(bound_opinions['value'], errors='coerce')
+    
     # i) Var(X)T
-    R5 = np.mean((bound_opinions.loc[bound_opinions['type']=="Last"].groupby('iteration').std()['value'])**2)
+    R5 = np.mean((bound_opinions.loc[bound_opinions['type']=="Last"].groupby('iteration')['value'].std().dropna())**2)
     # j) Average runtime
     avg_T = bound_opinions.loc[bound_opinions['type']=="Last"][['variable','iteration']].groupby('iteration').max().mean()[0]
     # k) Average flux start time
