@@ -116,7 +116,10 @@ a = sim_trial(opt_protocol,50,prop_opm,opinions_base,'opt',demog_cols,rho,C,O,
 
 exp_asymptote = [6,8]
 
-# double_plot(a,50,'opt',1,True,True,exp_asymptote)
+double_plot(a,50,'opt',1,True,True,exp_asymptote)
+
+# Testing purposes
+exit()
 
 extremists = True
 extreme_index = random.sample(range(N_STRONG_NODES_I),20)
