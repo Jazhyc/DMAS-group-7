@@ -855,157 +855,139 @@ def get_intervals(data):
 
 
 
-def opinion_analysis(data,experts,expert_input,n_iterations,extreme_index):
-    opinion_overview = pd.melt(data[[col for col in data if col.startswith(('opinions_','iteration','id'))]],id_vars=['iteration','id'])
-    opinion_overview['variable'] = opinion_overview.variable.str.replace('opinions_' , '')
-    opinion_overview.variable = opinion_overview.variable.astype(float)
-    # what is the maximal round number?
-    max_round = max(opinion_overview.variable)
-    # drop na rows
-    opinion_overview = opinion_overview[opinion_overview['value'].notna()].sort_values(by='variable')
-    opinion_grouped = opinion_overview.groupby(['iteration','id'])
-    bound_opinions = pd.concat([opinion_grouped.head(1),opinion_grouped.tail(1)]).drop_duplicates().sort_values(['iteration','id']).reset_index(drop=True)
-    bound_opinions['type'] = np.where(bound_opinions['variable']==0,"First","Last")
-    # also want to add round where they reached final opinion - within 0.01 of last opinion
-    last_opinions = bound_opinions.loc[bound_opinions.type=="Last",['iteration','id','value']]
-    last_opinions = last_opinions.rename(columns={'value':'last_value'})
-    last_opinion_reached = pd.merge(opinion_overview,last_opinions,on=['iteration','id'],how='left')
-    last_opinion_reached['within'] = np.where((last_opinion_reached['value']-last_opinion_reached['last_value']<=0.01)&(last_opinion_reached['value']-last_opinion_reached['last_value']>=-0.01),1,0)
-    # want last round where within = 0, then take following result
-    last_opinions_merge = last_opinion_reached.loc[last_opinion_reached['within']==0].groupby(['iteration','id']).last().reset_index()[['iteration','id','variable']]
-    last_opinions_merge.variable = np.where(last_opinions_merge['variable']==max_round,last_opinions_merge['variable'],last_opinions_merge['variable']+1)
-    last_opinions_merge['type'] = 'Mid'
-    # no rows for those whose opinions never changed - need to treat differently if commited minority
-    # merge on actual opinion
-    last_opinions_merge = pd.merge(last_opinions_merge,last_opinion_reached[['iteration','id','variable','value']],on=['iteration','id','variable'],how='left')[['iteration','id','variable','value','type']]
-    
-    # Update from append to concat
-    bound_opinions = pd.concat([bound_opinions, last_opinions_merge], ignore_index=True)
-    
-    # add rows for those whose opinions never changed
-    no_change = bound_opinions.groupby(['id','iteration']).count().reset_index()
-    no_change_ind = no_change.loc[no_change.type==2][['id','iteration']]
-    # check these cases exist
-    if no_change_ind.shape[0] > 0:
-        no_change_ind = pd.merge(no_change_ind,bound_opinions,on=['id','iteration'],how='left')
-        no_change_ind = no_change_ind.loc[no_change_ind['type']=="First"]
-        no_change_ind['type']="Mid"
-        bound_opinions = pd.concat([bound_opinions, no_change_ind], ignore_index=True)
-        
-    # also want to add first opinion shift - when did they start moving?
-    first_opinions = bound_opinions.loc[bound_opinions.type=="First",['iteration','id','value']]
-    first_opinions = first_opinions.rename(columns={'value':'first_value'})
-    first_opinion_reached = pd.merge(opinion_overview,first_opinions,on=['iteration','id'],how='left')
-    first_opinion_reached['within'] = np.where(first_opinion_reached['value']-first_opinion_reached['first_value']==0,1,0)
-    # want last round where within = 1, then take following result
-    first_opinions_merge = first_opinion_reached.loc[first_opinion_reached['within']==1].groupby(['iteration','id']).last().reset_index()[['iteration','id','variable']]
-    #first_opinions_merge.variable = np.where(first_opinions_merge['variable']==max_round,first_opinions_merge['variable'],first_opinions_merge['variable']+1)
-    first_opinions_merge['type'] = 'Start'
-    # convert those who never change back to 0
-    first_opinions_check = pd.merge(first_opinions_merge,bound_opinions.loc[bound_opinions.type=="Last"][['iteration','id','variable']].rename(columns={"variable":"last_vbl"}),on=['iteration','id'],how='left')
-    first_opinions_check.loc[first_opinions_check.variable == first_opinions_check.last_vbl,"variable"] = 0
-    # merge on actual opinion
-    first_opinions_merge = pd.merge(first_opinions_check[['iteration','id','variable','type']],first_opinion_reached[['iteration','id','variable','value']],on=['iteration','id','variable'],how='left')[['iteration','id','variable','value','type']]
+import pandas as pd
+import numpy as np
 
-    # use concat instead
-    bound_opinions = pd.concat([bound_opinions, first_opinions_merge], ignore_index=True)
-    
-    # add rows for those whose opinions never changed
-    no_change = bound_opinions.groupby(['id','iteration']).count().reset_index()
-    no_change_ind = no_change.loc[no_change.type==3][['id','iteration']]
-    # check these cases exist
-    if no_change_ind.shape[0] > 0:
-        no_change_ind = pd.merge(no_change_ind,bound_opinions,on=['id','iteration'],how='left')
-        no_change_ind = no_change_ind.loc[no_change_ind['type']=="First"]
-        no_change_ind['type']="Start"
-        bound_opinions = bound_opinions.append(no_change_ind,ignore_index=True)    
-    # now we have data, want to extract meaning:
-    # a) mean final opinion
-    mean_final = bound_opinions.loc[bound_opinions['type']=="Last"]['value'].mean()
-    # b) mean initial opinion
-    mean_initial = bound_opinions.loc[bound_opinions['type']=="First"]['value'].mean()
-    # c) mean expert opinion
+def calculate_R1(bound_opinions):
+    """
+    Calculate R1: Difference between mean final opinion and mean initial opinion.
+    """
+    mean_final = bound_opinions.loc[bound_opinions['type'] == "Last"]['value'].mean()
+    mean_initial = bound_opinions.loc[bound_opinions['type'] == "First"]['value'].mean()
+    return mean_final - mean_initial
+
+def calculate_R2(bound_opinions, expert_input, max_round):
+    """
+    Calculate R2: Difference between mean initial and final deviation from expert opinion.
+    """
     expert_redux = expert_input[0:int(max_round)]
     mean_expert = expert_redux.mean()
-    # R1 and R2
-    R1 = mean_final-mean_initial
-    #R2a = abs(mean_initial-mean_expert)
-    R2a = np.mean(abs(bound_opinions.loc[bound_opinions['type']=="First"]['value']-mean_expert))
-    R2b = np.mean(abs(bound_opinions.loc[bound_opinions['type']=="Last"]['value']-mean_expert))
-    R2 = R2a-R2b
-    # d) N8,0-N8,T
-    N8_0 = bound_opinions.loc[(bound_opinions.type=='First') & (bound_opinions.value>=8)].shape[0]
-    N8_T = bound_opinions.loc[(bound_opinions.type=='Last') & (bound_opinions.value>=8)].shape[0]
-    # e) N9,0-N9,T
-    N9_0 = bound_opinions.loc[(bound_opinions.type=='First') & (bound_opinions.value>=8.5)].shape[0]
-    N9_T = bound_opinions.loc[(bound_opinions.type=='Last') & (bound_opinions.value>=8.5)].shape[0]
-    # f) N0,0-N0,T
-    N1_0 = bound_opinions.loc[(bound_opinions.type=='First') & (bound_opinions.value<=1)].shape[0]
-    N1_T = bound_opinions.loc[(bound_opinions.type=='Last') & (bound_opinions.value<=1)].shape[0]
-    # g) N1,0-N1,T
-    N0_0 = bound_opinions.loc[(bound_opinions.type=='First') & (bound_opinions.value<=0.5)].shape[0]
-    N0_T = bound_opinions.loc[(bound_opinions.type=='Last') & (bound_opinions.value<=0.5)].shape[0]
-    # R3
-    R3a = (N8_0-N8_T)/n_iterations
-    R3b = (N9_0-N9_T)/n_iterations
-    R3c = (N1_0-N1_T)/n_iterations
-    R3d = (N0_0-N0_T)/n_iterations
-    # h) MT
-    # want mode for each iteration - number of peaks in KDE
-    # if extremists, need to exclude from analysis
+    
+    R2a = np.mean(abs(bound_opinions.loc[bound_opinions['type'] == "First"]['value'] - mean_expert))
+    R2b = np.mean(abs(bound_opinions.loc[bound_opinions['type'] == "Last"]['value'] - mean_expert))
+    
+    return R2a, R2b, R2a - R2b
+
+def calculate_R3(bound_opinions, n_iterations):
+    """
+    Calculate R3: Differences in the number of extreme opinions (N8, N9, N0, N1) across iterations.
+    """
+    N8_0 = bound_opinions.loc[(bound_opinions.type == 'First') & (bound_opinions.value >= 8)].shape[0]
+    N8_T = bound_opinions.loc[(bound_opinions.type == 'Last') & (bound_opinions.value >= 8)].shape[0]
+    
+    N9_0 = bound_opinions.loc[(bound_opinions.type == 'First') & (bound_opinions.value >= 8.5)].shape[0]
+    N9_T = bound_opinions.loc[(bound_opinions.type == 'Last') & (bound_opinions.value >= 8.5)].shape[0]
+    
+    N1_0 = bound_opinions.loc[(bound_opinions.type == 'First') & (bound_opinions.value <= 1)].shape[0]
+    N1_T = bound_opinions.loc[(bound_opinions.type == 'Last') & (bound_opinions.value <= 1)].shape[0]
+    
+    N0_0 = bound_opinions.loc[(bound_opinions.type == 'First') & (bound_opinions.value <= 0.5)].shape[0]
+    N0_T = bound_opinions.loc[(bound_opinions.type == 'Last') & (bound_opinions.value <= 0.5)].shape[0]
+    
+    R3a = (N8_0 - N8_T) / n_iterations
+    R3b = (N9_0 - N9_T) / n_iterations
+    R3c = (N1_0 - N1_T) / n_iterations
+    R3d = (N0_0 - N0_T) / n_iterations
+    
+    return R3a, R3b, R3c, R3d
+
+def calculate_R4(bound_opinions, extreme_index, n_iterations):
+    """
+    Calculate R4: Number of unique modes in the final distribution of opinions.
+    """
     if extreme_index == 0:
-        modal_data = bound_opinions.loc[bound_opinions.type=='Last']
+        modal_data = bound_opinions.loc[bound_opinions.type == 'Last']
     else:
-        modal_data = bound_opinions.loc[(bound_opinions.type=='Last') & (~bound_opinions.id.isin(extreme_index))]
-    # plot modal data as sense check if needed
-    #sns.distplot(modal_data['value'], hist=False, kde=True,bins=int(1800/5), color = 'darkblue', hist_kws={'edgecolor':'black'},kde_kws={'linewidth': 4})
+        modal_data = bound_opinions.loc[(bound_opinions.type == 'Last') & (~bound_opinions.id.isin(extreme_index))]
     
-    # replace msort with sort and axis=0
     data = np.sort(modal_data['value'], axis=0)
-    
     intervals = get_intervals(data)
-    # the bounds of each peak
+    
     R4 = len(intervals)
-    # is this always the mode?
+    
     modes = []
     for iteration in range(n_iterations):
-        
-        # replaced msort again
-        iter_modal_data = np.sort(modal_data.loc[modal_data.iteration==iteration]['value'], axis=0)
-        
+        iter_modal_data = np.sort(modal_data.loc[modal_data.iteration == iteration]['value'], axis=0)
         intervals = get_intervals(iter_modal_data)
         modes.append(len(intervals))
-    individual_mode_count = len([x for x in modes if x==R4]) 
     
-    # Trying to convert to numeric, required in latest version of pandas
-    bound_opinions['value'] = pd.to_numeric(bound_opinions['value'], errors='coerce')
+    individual_mode_count = len([x for x in modes if x == R4])
     
-    # i) Var(X)T
-    R5 = np.mean((bound_opinions.loc[bound_opinions['type']=="Last"].groupby('iteration')['value'].std().dropna())**2)
-    # j) Average runtime
-    avg_T = bound_opinions.loc[bound_opinions['type']=="Last"][['variable','iteration']].groupby('iteration').max().mean()[0]
-    # k) Average flux start time
-    avg_t_opm = bound_opinions.loc[bound_opinions['type']=="Start"]['variable'].mean()
-    # l) Average flux end time
-    avg_t_cm = bound_opinions.loc[bound_opinions['type']=="Mid"]['variable'].mean()
-    # m) Average flux time
-    avg_flux = avg_t_cm-avg_t_opm
+    return R4, individual_mode_count / n_iterations
+
+def calculate_R5(bound_opinions):
+    """
+    Calculate R5: Variance of the final opinions across iterations.
+    """
+    R5 = np.mean((bound_opinions.loc[bound_opinions['type'] == "Last"].groupby('iteration')['value'].std().dropna())**2)
+    return R5
+
+def calculate_avg_runtime(bound_opinions):
+    """
+    Calculate the average runtime for all iterations.
+    """
+    avg_T = bound_opinions.loc[bound_opinions['type'] == "Last"][['variable', 'iteration']].groupby('iteration').max().mean()[0]
+    return avg_T
+
+def calculate_avg_flux_times(bound_opinions):
+    """
+    Calculate average flux start time, end time, and time spent in flux.
+    """
+    avg_t_opm = bound_opinions.loc[bound_opinions['type'] == "Start"]['variable'].mean()
+    avg_t_cm = bound_opinions.loc[bound_opinions['type'] == "Mid"]['variable'].mean()
+    avg_flux = avg_t_cm - avg_t_opm
+    return avg_t_opm, avg_t_cm, avg_flux
+
+def opinion_analysis(data, experts, expert_input, n_iterations, extreme_index):
+    """
+    Perform opinion analysis on the provided data and return a dictionary with calculated metrics.
+    """
+    opinion_overview = pd.melt(data[[col for col in data if col.startswith(('opinions_', 'iteration', 'id'))]], id_vars=['iteration', 'id'])
+    opinion_overview['variable'] = opinion_overview.variable.str.replace('opinions_', '')
+    opinion_overview.variable = opinion_overview.variable.astype(float)
     
-    return {"R1":R1,
-            "R2a":R2a,
-            "R2b":R2b,
-            "R2":R2,
-            "R3a (8)":R3a,
-            "R3b (9)":R3b,
-            "R3c (1)":R3c,
-            "R3d (0)":R3d,
-            "R4":R4,
-            "R4 uniqueness":individual_mode_count/n_iterations,
-            "R5":R5,
-            "Average runtime":avg_T,
-            "Average t OPM":avg_t_opm,
-            "Average t CM":avg_t_cm,
-            "Average time in flux":avg_flux}
+    max_round = max(opinion_overview.variable)
+    opinion_overview = opinion_overview[opinion_overview['value'].notna()].sort_values(by='variable')
+    
+    bound_opinions = pd.concat([opinion_overview.groupby(['iteration', 'id']).head(1), opinion_overview.groupby(['iteration', 'id']).tail(1)]).drop_duplicates().sort_values(['iteration', 'id']).reset_index(drop=True)
+    bound_opinions['type'] = np.where(bound_opinions['variable'] == 0, "First", "Last")
+    
+    R1 = calculate_R1(bound_opinions)
+    R2a, R2b, R2 = calculate_R2(bound_opinions, expert_input, max_round)
+    R3a, R3b, R3c, R3d = calculate_R3(bound_opinions, n_iterations)
+    R4, R4_uniqueness = calculate_R4(bound_opinions, extreme_index, n_iterations)
+    R5 = calculate_R5(bound_opinions)
+    avg_T = calculate_avg_runtime(bound_opinions)
+    avg_t_opm, avg_t_cm, avg_flux = calculate_avg_flux_times(bound_opinions)
+    
+    return {
+        "R1": R1,
+        "R2a": R2a,
+        "R2b": R2b,
+        "R2": R2,
+        "R3a (8)": R3a,
+        "R3b (9)": R3b,
+        "R3c (1)": R3c,
+        "R3d (0)": R3d,
+        "R4": R4,
+        "R4 uniqueness": R4_uniqueness,
+        "R5": R5,
+        "Average runtime": avg_T,
+        "Average t OPM": avg_t_opm,
+        "Average t CM": avg_t_cm,
+        "Average time in flux": avg_flux
+    }
+
 
 
 
