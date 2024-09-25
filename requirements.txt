@@ -5,3 +5,4 @@ pandas==2.2.2
 scipy==1.14.1
 seaborn==0.13.2
 tqdm==4.66.5
+weightedstats==0.4.1

@@ -15,6 +15,7 @@ import seaborn as sns
 import copy
 from tqdm import tqdm
 import diptest
+from weightedstats import weighted_median
 
 # number of strong nodes - fixed at 20%
 N_STRONG_NODES_I = 100
@@ -236,6 +237,27 @@ def update_opinions_bounded_confidence(opinions, opm_status, exp_included, exp_o
 
     return new_opinions
 
+def update_opinions_weighted_median(opinions, opm_status, exp_included, exp_opinion, exp_weight, movement_speed):
+    n_agents = len(opinions)
+    new_opinions = opinions.copy()
+
+    if exp_included:
+        base_weights = [movement_speed * exp_weight] + n_agents * [movement_speed * (1 - exp_weight) / n_agents-1]
+        opinions = [exp_opinion, *opinions]
+    else:
+        base_weights = n_agents * [movement_speed * (1 - exp_weight) / n_agents - 1]
+
+    for agent_idx in range(n_agents):
+
+        # Opinion remains the same when not open-minded
+        if not opm_status[agent_idx]:
+            continue
+
+        weights = base_weights.copy()
+        weights[agent_idx+1] = 1 - movement_speed
+        new_opinions[agent_idx] = weighted_median([exp_opinion, *opinions], weights=weights)
+    return new_opinions
+
 def opinion_update(table_data, round_no, table_no, exp_included, exp_opinion, exp_weight, movement_speed, mode, nhood=None):
     """
     Optimized version of the opinion update function.
@@ -284,6 +306,9 @@ def opinion_update(table_data, round_no, table_no, exp_included, exp_opinion, ex
         if nhood is None:
             raise ValueError("Neighborhood radius (nhood) must be specified for bounded confidence mode.")
         new_opinions = update_opinions_bounded_confidence(opinions, opm_status, exp_included, exp_opinion, exp_weight, movement_speed, nhood)
+    elif mode == "weighted median":
+        new_opinions = update_opinions_weighted_median(opinions, opm_status, exp_included, exp_opinion, exp_weight,
+                                                       movement_speed)
     else:
         raise ValueError(f"Unknown mode: {mode}. Must be 'DeGroot' or 'bounded confidence'.")
 
