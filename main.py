@@ -31,25 +31,13 @@ warnings.simplefilter(action='ignore', category=FutureWarning)
 # 1 initialise parameters
 
 
-
-
-#power_prop = 0.2
-
 # allocation paradigm - fixed, random, opt
-allocation = 'fixed'
-allocation = 'random'
-allocation = 'opt'
 
 # parameters for rules - O, G, p
 O = np.round(N_STRONG_NODES_J/2) # group sway
-# rho: parameter for importance of diversity
-rho = 0.5
 
 # number of rounds
 T = 10
-
-# set global neighbourhood for bounded confidence
-nhood = 2.5
 
 # initial opinions - currently random, adjusting this is a big to-do
 
@@ -57,16 +45,10 @@ opinions_0 = np.repeat(range(10),np.repeat(10,10),axis=0)
 random.Random(3).shuffle(opinions_0)
 opinions_base = pd.DataFrame(opinions_0,columns=["opinions_0"])
 
-# initial openness distribution
-opm_trigger = 0.8
-clm_trigger = 0.2
-    # modelling: once openness reaches a threshold, bucket is full (can also subtract from openness)
-    # is there a reasonable distribution we can use for OPM? Then can simply adjust parameters
-
 # we want a distribution where: some individuals can have value already above the threshold, but most 
 # participants are closed-minded
 np.random.seed(0)
-# opm_0 = np.random.beta(2,4,n_i) # CONTINUOUS CASE
+
 prop_opm = 0.1
 
 # 2 create dataset from parameters (using code from IP - add in randomised OPM attribute)
@@ -75,81 +57,26 @@ prop_opm = 0.1
 opt_protocol = pd.read_csv('100_20_200_protocol.csv')
 # Data generated through table allocation code - single demographic (a1 or a2), with proportions 0.2 and 0.8
 
-
-data = create_data(opt_protocol,5,prop_opm,opinions_base,'opt',['a'],False,0)
-data = create_data(opt_protocol,200,0.1,opinions_base,'random',['a'],False,0)
-
 # 3 create update rules: function taking a given table grouping and updating status
 
 opinions_update = True
 exp_included = True
 # initialise expert - always presents evidence for 7 (to be updated)
-exp_opinion = 7
-exp_opinion_array = np.round(np.random.uniform(low=6,high=8,size=200))
 
-exp_weight = 0.1
-movement_speed = 0.1
-mode = "DeGroot" # "bounded_confidence"
-OPM_to_CM=True
 prop_opm=0.1
 O=7
 rho=0.2
-R=0.005
-pt=0.01
 O2=8.5
 demog_cols=['a']
 # define possible number of demographic subgroups
 C = 2
-table = opm_update(data,1,0,demog_cols,rho,C,O,
-                   opinions_update,exp_included,exp_opinion,exp_weight,movement_speed,mode,
-                   OPM_to_CM,pt,O2)
 
-
-
-r1 = round_update(data,1,demog_cols,rho,C,O,opinions_update,exp_included,exp_opinion_array[0],exp_weight,movement_speed,mode,OPM_to_CM,pt,O2)
-r2 = round_update(r1,2,demog_cols,rho,C,O,opinions_update,exp_included,exp_opinion_array[1],exp_weight,movement_speed,mode,OPM_to_CM,pt,O2)
-
-# allocation paradigm - fixed, random, opt
-a = sim_trial(opt_protocol,50,prop_opm,opinions_base,'opt',demog_cols,rho,C,O,
-              opinions_update,exp_included,exp_opinion_array,exp_weight,movement_speed,mode,
-              OPM_to_CM,pt,O2,False,0)
-
-exp_asymptote = [6,8]
-
-double_plot(a,50,'opt',1,True,True,exp_asymptote)
-
-# Testing purposes
-exit()
-
-extremists = True
 extreme_index = random.sample(range(N_STRONG_NODES_I),20)
-
-n_iterations = 5
-a1 = avg_over_trials(opt_protocol,20,prop_opm,opinions_base,allocation,demog_cols,rho,C,O,n_iterations,
-                    opinions_update,exp_included,exp_opinion_array,exp_weight,movement_speed,mode,
-                    OPM_to_CM,pt,O2,
-                    False,0)
-
-# double_plot(a1,50,'opt',n_iterations,True,True,exp_asymptote)
-
-# 4 visualise output
-
-# for each round, want info on: (a) how many are OPM, (b) how many because of prob, (c) how many because of G,
-# (d) how many becaose of O
-
-input_frame = a
-T=20
-allocation='opt'
-n_iterations=1
-scale_to_complete=True
-
-# double_plot(a1,20,'opt',5,True,True,exp_asymptote)
 
 # Experts: random, central, extreme, switching between extremes periodically, none
 n_iterations = 10
 extreme_index = random.sample(range(N_STRONG_NODES_I),20)
 experts_random = np.random.choice(np.arange(0,10),size=200)
-experts_central = np.array(random.choices([3,4,5,6],[0.125,0.375,0.375,0.125],k=200))
 experts_extreme = np.repeat(8,200)
 experts_periodic = np.tile(np.concatenate((np.repeat(1,5),np.repeat(8,5))),20)
 
@@ -181,11 +108,9 @@ demog_cols = ['a']
 # variable: prop_opm=0.1 (OPM True) or 1 (OPM False),
 # variable: opinions_base=opinions_base, opinions_bimodal, opinions_extreme
 allocation='opt'
-R=0.005
 pt=0.001
 O=7
 C=2 # two demographic levels in this example
-n_iterations=10
 opinions_update=True
 exp_included = True
 # variable: exp_weight = 0.1 (x_x_low_x_x) or 0.25 (x_x_high_x_x)
@@ -198,21 +123,23 @@ O2=7
 
 paradigm_values = {
     'dg': "DeGroot",
+    'wm': "weighted median",
     #'bc': "bounded confidence"
 }
 
 exp_values = {
     'random': experts_random_update,
-    'extrem': experts_extreme_update,
-    'periodic': experts_periodic_update
+#    'extrem': experts_extreme_update,
+#    'periodic': experts_periodic_update
 }
 
 participant_values = {
     'random': [opinions_base, False, 0],
-    'bipart': [opinions_bimodal, False, 0],
-    'extrem': [opinions_extreme, True, extreme_index]
+#    'bipart': [opinions_bimodal, False, 0],
+#    'extrem': [opinions_extreme, True, extreme_index]
 }
 
+# This is atrocious
 speed_values = {
     'slower': [
         0.075, 
@@ -240,6 +167,11 @@ for mode in paradigm_values:
                                              opm_values[opm],
                                              pt,O2,
                                              participant_values[participant][1],participant_values[participant][2])
+                    
+                    # Plot the evolution of opinions
+                    double_plot(output,T,'opt',n_iterations,True,True,0, save_path=f"output/{string}")
+                    
+                    # Get statistics on the final opinions
                     values = opinion_analysis(output,True,np.array(exp_values[exp][0]),n_iterations,participant_values[participant][2])
                     if trial == 0:
                         final_data = {string:values}
@@ -249,7 +181,10 @@ for mode in paradigm_values:
 
 output_2 = pd.DataFrame(final_data).transpose().reset_index()
 
-# Till here for speed test
+# Convert to csv
+output_2.to_csv('output/summary.csv')
+
+
 exit()
 
 # why is there bimodality in periodic, bipart?

@@ -17,11 +17,9 @@ from tqdm import tqdm
 import diptest
 from weightedstats import weighted_median
 
-# number of strong nodes - fixed at 20%
+# number of strong nodes - fixed at 20%, what does this mean?
 N_STRONG_NODES_I = 100
 N_STRONG_NODES_J=10
-
-#!pip install unidip
 
 
 def opm_status(row):
@@ -256,6 +254,7 @@ def update_opinions_weighted_median(opinions, opm_status, exp_included, exp_opin
         weights = base_weights.copy()
         weights[agent_idx+1] = 1 - movement_speed
         new_opinions[agent_idx] = weighted_median([exp_opinion, *opinions], weights=weights)
+        
     return new_opinions
 
 def opinion_update(table_data, round_no, table_no, exp_included, exp_opinion, exp_weight, movement_speed, mode, nhood=None):
@@ -268,8 +267,6 @@ def opinion_update(table_data, round_no, table_no, exp_included, exp_opinion, ex
         DataFrame containing the agent data. Must include columns for agent IDs, allocation, opm status, and opinions.
     round_no : int
         The current round number.
-    table_no : int
-        The current table number (not used in this function but kept for consistency).
     exp_included : bool
         Whether expert opinion is included in the opinion update process.
     exp_opinion : float
@@ -296,7 +293,7 @@ def opinion_update(table_data, round_no, table_no, exp_included, exp_opinion, ex
     new_opm_status_col = f'opm_status_{round_no}'
     opinion_col = f'opinions_{round_no - 1}'
     new_opinion_col = f'opinions_{round_no}'
-
+    
     opinions = table_data[opinion_col].values
     opm_status = table_data[new_opm_status_col].values
 
@@ -391,7 +388,7 @@ def avg_over_trials(input_data,T,prop_opm,opinions_base,allocation,demog_cols,rh
 # openness_simulations.py line 104: input_frame = latex_plot_good, T=200, allocation = 'opt', scale_to_complete=True, n_iterations=5, importance = True
 # exp_asmyptote = experts_extreme_update[0]
 
-def plot_opm_overview(input_frame, n_iterations, scale_to_complete, T, N_STRONG_NODES_I):
+def plot_opm_overview(input_frame, n_iterations, scale_to_complete, T, N_STRONG_NODES_I, save_path=None):
     """
     Plots the overview of OPM (Open-mindedness) status over iterations.
 
@@ -471,12 +468,11 @@ def plot_opm_overview(input_frame, n_iterations, scale_to_complete, T, N_STRONG_
         plt.xlabel('# rounds')
 
     print("Plot 1 complete")
-    plt.show()
-    plt.close()
+    display_figure(save_path, "opm_overview")
     
     return opm_grouped, time_to_consensus
 
-def plot_opm_influence(input_frame, n_iterations, scale_to_complete, time_to_consensus, N_STRONG_NODES_I, importance):
+def plot_opm_influence(input_frame, n_iterations, scale_to_complete, time_to_consensus, N_STRONG_NODES_I, importance, save_path=None):
     """
     Plots the influence of different OPM (Open-mindedness) rules over iterations.
 
@@ -557,12 +553,11 @@ def plot_opm_influence(input_frame, n_iterations, scale_to_complete, time_to_con
     plt.xlim(0, 100 if scale_to_complete else time_to_consensus + 1)
 
     print("Plot 2 complete")
-    plt.show()
-    plt.close()
+    display_figure(save_path, "opm_influence")
     
     return prob_grouped
 
-def plot_simulation_results(prob_grouped, n_iterations, N_STRONG_NODES_I, importance, scale_to_complete, x_lim):
+def plot_simulation_results(prob_grouped, n_iterations, N_STRONG_NODES_I, importance, scale_to_complete, x_lim, save_path=None):
     """
     Plots the simulation results based on the provided data.
 
@@ -594,14 +589,10 @@ def plot_simulation_results(prob_grouped, n_iterations, N_STRONG_NODES_I, import
     plt.xlim(0, x_lim)
     
     print("Plot 3 complete")
-    plt.show()
-    plt.close()
     
-import pandas as pd
-import numpy as np
-import matplotlib.pyplot as plt
+    display_figure(save_path, "simulation_results")
 
-def plot_opinion_shift(input_frame, n_iterations, exp_asymptote, scale_to_complete, time_to_consensus, x_lim):
+def plot_opinion_shift(input_frame, n_iterations, exp_asymptote, scale_to_complete, time_to_consensus, x_lim, save_path=None):
     """
     Plots the opinion shift over time based on the provided data.
 
@@ -692,13 +683,13 @@ def plot_opinion_shift(input_frame, n_iterations, exp_asymptote, scale_to_comple
     plt.xlim(0, x_lim)
     
     print("Plot 4 complete")
-    plt.show()
-    plt.close()
+    
+    display_figure(save_path=save_path, figure_name="opinion_shift")
     
     return opinion_error_values
 
 
-def plot_opm_and_prob_grouped(opm_grouped, prob_grouped, opm_error_values, n_iterations, N_STRONG_NODES_I, scale_to_complete, T, importance):
+def plot_opm_and_prob_grouped(opm_grouped, prob_grouped, opm_error_values, n_iterations, N_STRONG_NODES_I, scale_to_complete, T, importance, save_path=None):
     """
     Plots the OPM and probability grouped data.
 
@@ -759,19 +750,31 @@ def plot_opm_and_prob_grouped(opm_grouped, prob_grouped, opm_error_values, n_ite
     plt.xlim(0, x_lim)
     
     print("Plot 5 complete")
-    plt.show()
+    display_figure(save_path=save_path, figure_name="opm_and_prob_grouped")
 
-def double_plot(input_frame,T,allocation,n_iterations,scale_to_complete,importance,exp_asymptote):
+def display_figure(save_path=None, figure_name=None):
+    if save_path is not None and figure_name is not None:
+        
+        if not os.path.exists(save_path):
+            os.makedirs(save_path)
+        
+        plt.savefig(f"{save_path}/{figure_name}.png")
+    else:
+        plt.show()
     
-    opm_grouped, time_to_consensus = plot_opm_overview(input_frame, n_iterations, scale_to_complete, T, N_STRONG_NODES_I)
+    plt.close()
+
+def double_plot(input_frame,T,allocation,n_iterations,scale_to_complete,importance,exp_asymptote,save_path=None):
     
-    prob_grouped = plot_opm_influence(input_frame, n_iterations, scale_to_complete, T, N_STRONG_NODES_I, importance)
+    opm_grouped, time_to_consensus = plot_opm_overview(input_frame, n_iterations, scale_to_complete, T, N_STRONG_NODES_I, save_path=save_path)
     
-    plot_simulation_results(prob_grouped, n_iterations, N_STRONG_NODES_I, importance, scale_to_complete, x_lim=T)
+    prob_grouped = plot_opm_influence(input_frame, n_iterations, scale_to_complete, T, N_STRONG_NODES_I, importance, save_path=save_path)
     
-    opm_error_values = plot_opinion_shift(input_frame, n_iterations, exp_asymptote, scale_to_complete, time_to_consensus, x_lim=T)
+    plot_simulation_results(prob_grouped, n_iterations, N_STRONG_NODES_I, importance, scale_to_complete, x_lim=T, save_path=save_path)
     
-    plot_opm_and_prob_grouped(opm_grouped, prob_grouped, opm_error_values, n_iterations, N_STRONG_NODES_I, scale_to_complete, T, importance)
+    opm_error_values = plot_opinion_shift(input_frame, n_iterations, exp_asymptote, scale_to_complete, time_to_consensus, x_lim=T, save_path=save_path)
+    
+    plot_opm_and_prob_grouped(opm_grouped, prob_grouped, opm_error_values, n_iterations, N_STRONG_NODES_I, scale_to_complete, T, importance, save_path=save_path)
        
     
 # data = isolate_fit_opt
@@ -878,11 +881,6 @@ def get_intervals(data):
     intervals = [lower_indices, upper_indices]
     return intervals
 
-
-
-import pandas as pd
-import numpy as np
-
 def calculate_R1(bound_opinions):
     """
     Calculate R1: Difference between mean final opinion and mean initial opinion.
@@ -928,7 +926,7 @@ def calculate_R3(bound_opinions, n_iterations):
 
 def calculate_R4(bound_opinions, extreme_index, n_iterations):
     """
-    Calculate R4: Number of unique modes in the final distribution of opinions.
+    Calculate R4: Number of unique modes in the final distribution of opinions?
     """
     if extreme_index == 0:
         modal_data = bound_opinions.loc[bound_opinions.type == 'Last']
