@@ -9,12 +9,14 @@ import numpy as np
 import pandas as pd
 import random
 from random import seed
+
+from unidip import UniDip
+
 seed(1)
 import matplotlib.pyplot as plt
 import seaborn as sns
 import copy
 from tqdm import tqdm
-import diptest
 from weightedstats import weighted_median
 
 # number of strong nodes - fixed at 20%, what does this mean?
@@ -362,7 +364,6 @@ def avg_over_trials(input_data,T,prop_opm,opinions_base,allocation,demog_cols,rh
                     opinions_update,exp_included,exp_opinion_array,exp_weight,movement_speed,mode,
                     OPM_to_CM,pt,O2,
                     extremists,extreme_index):
-    
     for i in tqdm(range(n_iterations), desc="Iteration"):
         #print("Iteration: "+str(i))
         
@@ -870,17 +871,6 @@ def fit_exp_to_O(data,pad_0,scale_to_100,method,importance):
     ax.legend()
 
 
-
-#! Needs verification
-def get_intervals(data):
-    # Uses diptest to get the lower and upper bounds of the dip test
-    dip, results = diptest.dipstat(data, full_output=True, sort_x=True, allow_zero=True)
-    lower_indices = results['lo']
-    upper_indices = results['hi']
-    
-    intervals = [lower_indices, upper_indices]
-    return intervals
-
 def calculate_R1(bound_opinions):
     """
     Calculate R1: Difference between mean final opinion and mean initial opinion.
@@ -928,22 +918,27 @@ def calculate_R4(bound_opinions, extreme_index, n_iterations):
     """
     Calculate R4: Number of unique modes in the final distribution of opinions?
     """
+
+    # ToDO
+    # If I understand correctly, this computes the #modality for each past iteration, at the end of each iteration
+    # Could be more efficient by computing the #modality once for each iteration, and storing it for later retrieval on
+    # subsequent function calls.
+
     if extreme_index == 0:
         modal_data = bound_opinions.loc[bound_opinions.type == 'Last']
     else:
         modal_data = bound_opinions.loc[(bound_opinions.type == 'Last') & (~bound_opinions.id.isin(extreme_index))]
     
     data = np.sort(modal_data['value'], axis=0)
-    intervals = get_intervals(data)
-    
+    intervals = UniDip(data).run()
     R4 = len(intervals)
-    
+
     modes = []
     for iteration in range(n_iterations):
         iter_modal_data = np.sort(modal_data.loc[modal_data.iteration == iteration]['value'], axis=0)
-        intervals = get_intervals(iter_modal_data)
+        intervals = UniDip(iter_modal_data).run()
         modes.append(len(intervals))
-    
+
     individual_mode_count = len([x for x in modes if x == R4])
     
     return R4, individual_mode_count / n_iterations
