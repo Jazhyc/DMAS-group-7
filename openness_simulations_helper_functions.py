@@ -990,26 +990,37 @@ def opinion_analysis(data, experts, expert_input, n_iterations, extreme_index):
     
     # Need to change the rest of the code to properly reflect the conditions mentioned in the paper
     return {
-        "R1": R1,
-        "R1? Satisfied": R1 > 0,
-        "R2a": R2a,
-        "R2b": R2b,
-        "R2": R2,
+        #"R1": R1,
+        #"R1? Satisfied": R1 > 0,
+        #"R2a": R2a,
+        #"R2b": R2b,
+        #"R2": R2,
+        #"R1 (Paper) Satisfied": R2 > 0,
+        #"R3a (8)": R3a,
+        #"R3b (9)": R3b,
+        #"R3c (1)": R3c,
+        #"R3d (0)": R3d,
+        #"R4 (Paper) Satisfied": R3b > 0 and R3d > 0,
+        #"R4": R4,
+        #"R4 uniqueness": R4_uniqueness,
+        #"R3 (Paper) Satisfied": R4 == 1,
+        #"R5": R5,
+        #"R2 (Paper) Satisfied": R5 > 0,
+        #"Average runtime": avg_T,
+        #"Average t OPM": avg_t_opm,
+        #"Average t CM": avg_t_cm,
+        #"Average time in flux": avg_flux
+        
+        "R1": R2,
         "R1 (Paper) Satisfied": R2 > 0,
-        "R3a (8)": R3a,
-        "R3b (9)": R3b,
-        "R3c (1)": R3c,
-        "R3d (0)": R3d,
-        "R4 (Paper) Satisfied": R3b > 0 and R3d > 0,
-        "R4": R4,
-        "R4 uniqueness": R4_uniqueness,
-        "R3 (Paper) Satisfied": R4 == 1,
-        "R5": R5,
+        "R2" : R5,
         "R2 (Paper) Satisfied": R5 > 0,
-        "Average runtime": avg_T,
-        "Average t OPM": avg_t_opm,
-        "Average t CM": avg_t_cm,
-        "Average time in flux": avg_flux
+        "R3": R4,
+        "R3 (Paper) Satisfied": R4 == 1,
+        "R4a (9)": R3b,
+        "R4b (0)": R3d,
+        "R4 (Paper) Satisfied": R3b > 0 and R3d > 0,
+        
     }
 
 

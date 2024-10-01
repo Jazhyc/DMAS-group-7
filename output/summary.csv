@@ -1,5 +1,5 @@
-,index,R1,R1? Satisfied,R2a,R2b,R2,R1 (Paper) Satisfied,R3a (8),R3b (9),R3c (1),R3d (0),R4 (Paper) Satisfied,R4,R4 uniqueness,R3 (Paper) Satisfied,R5,R2 (Paper) Satisfied,Average runtime,Average t OPM,Average t CM,Average time in flux
-0,dg_random_random_slower_opm,0.062329488663333876,True,2.5,0.34898248986882996,2.15101751013117,True,20.0,10.0,20.0,10.0,True,1,1.0,True,0.27792269304948136,True,48.1,,,
-1,dg_random_random_slower_nopm,0.08142315273634271,True,2.5,2.2602254943999425,0.23977450560005753,True,1.2,0.4,3.0,1.4,True,1,1.0,True,7.462945228000514,True,200.0,,,
-2,wm_random_random_slower_opm,0.5170000000000003,True,2.5,2.6979019607843138,-0.19790196078431377,False,-8.2,-2.1,2.4,-0.1,False,1,0.7,True,8.348272727272729,True,45.9,,,
-3,wm_random_random_slower_nopm,-0.05900000000000016,False,2.5,2.497,0.0030000000000001137,True,0.4,-0.2,0.2,0.4,False,1,1.0,True,8.274838383838382,True,200.0,,,
+,index,R1,R1 (Paper) Satisfied,R2,R2 (Paper) Satisfied,R3,R3 (Paper) Satisfied,R4a (9),R4b (0),R4 (Paper) Satisfied
+0,dg_random_random_slower_opm,2.15101751013117,True,0.27792269304948136,True,1,True,10.0,10.0,True
+1,dg_random_random_slower_nopm,0.23977450560005753,True,7.462945228000514,True,1,True,0.4,1.4,True
+2,wm_random_random_slower_opm,-0.19790196078431377,False,8.348272727272729,True,1,True,-2.1,-0.1,False
+3,wm_random_random_slower_nopm,0.0030000000000001137,True,8.274838383838382,True,1,True,-0.2,0.4,False
