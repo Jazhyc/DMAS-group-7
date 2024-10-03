@@ -21,7 +21,7 @@ from weightedstats import weighted_median
 
 # number of strong nodes - fixed at 20%, what does this mean?
 N_STRONG_NODES_I = 100
-N_STRONG_NODES_J=10
+N_TABLES=10
 
 
 def opm_status(row):
@@ -320,7 +320,7 @@ def round_update(data,round_no,demog_cols,rho,C,O,
                  opinions_update,exp_included,exp_opinion,exp_weight,movement_speed,mode,
                  OPM_to_CM,pt,O2):
     #print("generating for round "+str(round_no))
-    for table_no in range(N_STRONG_NODES_J):
+    for table_no in range(N_TABLES):
         #print("table "+str(table_no))
         new_opm = opm_update(data,round_no,table_no,demog_cols,rho,C,O,
                              opinions_update, exp_included, exp_opinion, exp_weight, movement_speed,mode,
@@ -765,17 +765,18 @@ def display_figure(save_path=None, figure_name=None):
     
     plt.close()
 
+# Skip the errorneous plots for now
 def double_plot(input_frame,T,allocation,n_iterations,scale_to_complete,importance,exp_asymptote,save_path=None):
     
     opm_grouped, time_to_consensus = plot_opm_overview(input_frame, n_iterations, scale_to_complete, T, N_STRONG_NODES_I, save_path=save_path)
     
-    prob_grouped = plot_opm_influence(input_frame, n_iterations, scale_to_complete, T, N_STRONG_NODES_I, importance, save_path=save_path)
+    #prob_grouped = plot_opm_influence(input_frame, n_iterations, scale_to_complete, T, N_STRONG_NODES_I, importance, save_path=save_path)
     
-    plot_simulation_results(prob_grouped, n_iterations, N_STRONG_NODES_I, importance, scale_to_complete, x_lim=T, save_path=save_path)
+    #plot_simulation_results(prob_grouped, n_iterations, N_STRONG_NODES_I, importance, scale_to_complete, x_lim=T, save_path=save_path)
     
     opm_error_values = plot_opinion_shift(input_frame, n_iterations, exp_asymptote, scale_to_complete, time_to_consensus, x_lim=T, save_path=save_path)
     
-    plot_opm_and_prob_grouped(opm_grouped, prob_grouped, opm_error_values, n_iterations, N_STRONG_NODES_I, scale_to_complete, T, importance, save_path=save_path)
+    #plot_opm_and_prob_grouped(opm_grouped, prob_grouped, opm_error_values, n_iterations, N_STRONG_NODES_I, scale_to_complete, T, importance, save_path=save_path)
        
     
 # data = isolate_fit_opt

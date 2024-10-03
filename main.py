@@ -36,7 +36,7 @@ warnings.simplefilter(action='ignore', category=FutureWarning)
 # allocation paradigm - fixed, random, opt
 
 # parameters for rules - O, G, p
-O = np.round(N_STRONG_NODES_J/2) # group sway
+O = np.round(N_TABLES/2) # group sway
 
 # number of rounds
 T = 10
@@ -162,8 +162,7 @@ for mode in paradigm_values:
                                              participant_values[participant][1],participant_values[participant][2])
                     
                     # Plot the evolution of opinions
-                    # I'm skipping this since a error appears to occur with different hyperparameters
-                    # double_plot(output,T,'opt',n_iterations,True,True,0, save_path=f"output/{string}")
+                    double_plot(output,T,'opt',n_iterations,True,True,0, save_path=f"output/{string}")
                     
                     # Get statistics on the final opinions
                     values = opinion_analysis(output,True,np.array(exp_values[exp][0]),n_iterations,participant_values[participant][2])
