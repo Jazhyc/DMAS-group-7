@@ -3,6 +3,8 @@ import pandas as pd
 agent_distribution_dict = {
     'random': 'Random',
     'bipart': 'Bipartisan',
+    'extreme': 'Extreme',
+    'periodic': 'Periodic'
 }
 
 def csv_to_latex_table(df):

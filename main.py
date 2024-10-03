@@ -63,15 +63,6 @@ opt_protocol = pd.read_csv('100_20_200_protocol.csv')
 
 opinions_update = True
 exp_included = True
-# initialise expert - always presents evidence for 7 (to be updated)
-
-prop_opm=0.1
-O=7
-rho=0.2
-O2=8.5
-demog_cols=['a']
-# define possible number of demographic subgroups
-C = 2
 
 extreme_index = random.sample(range(N_STRONG_NODES_I),20)
 
@@ -105,7 +96,7 @@ opinions_extreme.loc[extreme_index[11:20]]=9
 input_data = opt_protocol
 prop_opm=0.1
 T=200
-rho=0.1
+rho=0.01 # Updated value to match paper
 demog_cols = ['a']
 # variable: prop_opm=0.1 (OPM True) or 1 (OPM False),
 # variable: opinions_base=opinions_base, opinions_bimodal, opinions_extreme
@@ -131,14 +122,14 @@ paradigm_values = {
 
 exp_values = {
     'random': experts_random_update,
-#    'extrem': experts_extreme_update,
-#    'periodic': experts_periodic_update
+#    'extreme': experts_extreme_update,
+    'periodic': experts_periodic_update
 }
 
 participant_values = {
     'random': [opinions_base, False, 0],
     'bipart': [opinions_bimodal, False, 0],
-#    'extrem': [opinions_extreme, True, extreme_index]
+#    'extreme': [opinions_extreme, True, extreme_index]
 }
 
 # This is atrocious
@@ -171,7 +162,8 @@ for mode in paradigm_values:
                                              participant_values[participant][1],participant_values[participant][2])
                     
                     # Plot the evolution of opinions
-                    double_plot(output,T,'opt',n_iterations,True,True,0, save_path=f"output/{string}")
+                    # I'm skipping this since a error appears to occur with different hyperparameters
+                    # double_plot(output,T,'opt',n_iterations,True,True,0, save_path=f"output/{string}")
                     
                     # Get statistics on the final opinions
                     values = opinion_analysis(output,True,np.array(exp_values[exp][0]),n_iterations,participant_values[participant][2])
