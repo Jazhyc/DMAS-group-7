@@ -1014,7 +1014,7 @@ def opinion_analysis(data, experts, expert_input, n_iterations, extreme_index):
         "R1": R2,
         "R1 (Paper) Satisfied": R2 > 0,
         "R2" : R5,
-        "R2 (Paper) Satisfied": R5 > 0,
+        "R2 (Paper) Satisfied": R5 > 0.1, # Paper uses 0.1 as threshold
         "R3": R4,
         "R3 (Paper) Satisfied": R4 == 1,
         "R4a (9)": R3b,
