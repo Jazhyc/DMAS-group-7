@@ -32,20 +32,25 @@ def csv_to_latex_table(df):
     df['Combined Satisfaction'] = df.apply(combine_satisfaction, axis=1)
    
     # Pivot the dataframe to create OPM and NOPM columns
-    df_pivot = df.pivot(index=['Model Type', 'Expert Allocation', 'Agent Allocation'], 
-                        columns='Open Mindedness', 
+    df_pivot = df.pivot(index=['Model Type', 'Expert Allocation', 'Agent Allocation'],
+                        columns='Open Mindedness',
                         values='Combined Satisfaction')
     df_pivot.columns.name = None
     df_pivot.reset_index(inplace=True)
-    
-    # Generate LaTeX table
-    latex_table = "\\begin{table}[h]\n\\centering\n\\begin{tabular}{|c|c|c|c|c|}\n\\hline\n"
-    latex_table += "Model Type & Expert Allocation & Agent Allocation & \\multicolumn{2}{c|}{Open Mindedness Included} \\\\ \\cline{4-5}\n"
-    latex_table += " &  &  & True & False \\\\ \\hline\n"
    
+    # Generate LaTeX table
+    latex_table = """\\begin{table}[h]
+\\centering
+\\renewcommand{\\arraystretch}{1.2}
+\\begin{tabular}{|c|c|c|c|c|}\n\\hline
+\\textbf{Model Type} & \\textbf{Expert} & \\textbf{Agent} & \\multicolumn{2}{c|}{\\textbf{Open Mindedness}} \\\\
+ & \\textbf{Allocation} & \\textbf{Allocation} & \\multicolumn{2}{c|}{\\textbf{Included}} \\\\ \\cline{4-5}
+ &  &  & \\multicolumn{1}{p{2cm}|}{\\centering \\textbf{True}} & \\multicolumn{1}{p{2cm}|}{\\centering \\textbf{False}} \\\\ \\hline\n"""
+
     for _, row in df_pivot.iterrows():
         latex_table += f"{row['Model Type']} & {row['Expert Allocation']} & {row['Agent Allocation']} & "
-        latex_table += f"{row['opm']} & {row['nopm']} \\\\ \\hline\n"
+        latex_table += f"\\multicolumn{{1}}{{p{{2cm}}|}}{{{row['opm'] if 'opm' in row else ''}}} & "
+        latex_table += f"\\multicolumn{{1}}{{p{{2cm}}|}}{{{row['nopm'] if 'nopm' in row else ''}}} \\\\ \\hline\n"
    
     latex_table += "\\end{tabular}\n\\caption{Experimental Results}\n\\label{tab:results}\n\\end{table}"
    
