@@ -9,18 +9,19 @@ import numpy as np
 import pandas as pd
 import random
 from random import seed
+
+from unidip import UniDip
+
 seed(1)
 import matplotlib.pyplot as plt
 import seaborn as sns
 import copy
+from tqdm import tqdm
+from weightedstats import weighted_median
 
-# number of strong nodes - fixed at 20%
+# number of strong nodes - fixed at 20%, what does this mean?
 N_STRONG_NODES_I = 100
-N_STRONG_NODES_J=10
-
-#!pip install unidip
-from unidip import UniDip
-import unidip.dip as dip
+N_TABLES=10
 
 
 def opm_status(row):
@@ -77,12 +78,16 @@ def create_data(input_data,T,prop_opm,opinions_base,allocation,demog_cols,extrem
 
 # need a diversity calculator for second OPM rule. For our simple example, demog_cols is simply ['a'], and as the allocation is optimised there
 # is identical diversity per table per round
-def diverse_calc(table,demog_cols,rho,C):
-    # want to return a scalar value based on the diversity of the table
-    P_values = table.groupby(demog_cols).count().reset_index()['prior_open']/table.shape[0] # prior_open used as an index - could use any col
-    # using NGV diversity metric
-    NGV = C*(1-sum([x**2 for x in P_values]))/(C-1)
-    return rho*NGV
+
+def diverse_calc(table, demog_cols, rho, C):
+    # Calculate the proportion of each group
+    P_values = table.groupby(demog_cols).size() / len(table)
+    
+    # Calculate the NGV diversity metric
+    NGV = C * (1 - sum(P_values ** 2)) / (C - 1)
+    
+    # Return the product of rho and NGV
+    return rho * NGV
 
 
 # testing pt rule
@@ -92,123 +97,221 @@ def diverse_calc(table,demog_cols,rho,C):
 #round_no = 1
 #table_no = 1
 
-def opm_update(data,round_no,table_no,demog_cols,rho,C,O,opinions_update,
-               exp_included,exp_opinion,exp_weight,movement_speed,mode,
-               OPM_to_CM,pt,O2):
-    # Here we can define and re-define rules of OPM updating
-    # function takes current OPM levels for a table, runs through rules, and outputs new OPM
-    opm_status_col = 'opm_status_'+str(round_no-1)
-    new_opm_status_col = 'opm_status_'+str(round_no)
-    table_col = 'allocation_'+str(round_no)
-    opinion_col = 'opinions_'+str(round_no-1)
-    new_opinion_col = 'opinions_'+str(round_no)
-    
-    table=data.loc[data[table_col]==table_no][['id',table_col,opm_status_col,opinion_col,'first_rho','first_O','first_pt','first_O2','OPM_to_CM_trigger'] + demog_cols]   
-    
-    table[new_opm_status_col] = table[opm_status_col]
-    table['prior_open'] = table[opm_status_col]
-    table[new_opinion_col] = table[opinion_col]
-    # CRITERIA 1: encounter more than O who are already open
-    # 1b: if already open, encounter more than O who have become closed (later)
-    if OPM_to_CM: # used now for any OPM
-        no_open = sum(table['prior_open'])
-        if(no_open>=O):
-            # those with status 0 reach status 1
-            table.loc[(table[opm_status_col]==0)&(table['OPM_to_CM_trigger']==0),new_opm_status_col]=1
-            table.loc[table['first_O']==0,'first_O']=round_no
-        # CRITERIA 2: if on a diverse table, higher probability of becoming OPM
-        rho_NGV = diverse_calc(table,demog_cols,rho,C)
-        table['temp_prob']=random.choices([0,1],weights=[1-rho_NGV,rho_NGV],k=table.shape[0])
-        # need to track if already triggered
-        table.loc[table['first_rho']==0,'first_rho']=np.multiply(table.loc[table['first_rho']==0,'temp_prob'],round_no)
-        table.loc[(table[opm_status_col]==0) & (table['temp_prob']==1)&(table['OPM_to_CM_trigger']==0),new_opm_status_col]=1
-        
+def opm_update(data, round_no, table_no, demog_cols, rho, C, O, opinions_update, 
+               exp_included, exp_opinion, exp_weight, movement_speed, mode,
+               OPM_to_CM, pt, O2):
+
+    # Define column names
+    opm_status_col = f'opm_status_{round_no-1}'
+    new_opm_status_col = f'opm_status_{round_no}'
+    table_col = f'allocation_{round_no}'
+    opinion_col = f'opinions_{round_no-1}'
+    new_opinion_col = f'opinions_{round_no}'
+
+    # Pre-slice the data to reduce frequent .loc calls
+    selected_columns = ['id', table_col, opm_status_col, opinion_col, 
+                        'first_rho', 'first_O', 'first_pt', 'first_O2', 
+                        'OPM_to_CM_trigger'] + demog_cols
+
+    table = data.loc[data[table_col] == table_no, selected_columns].copy()
+
+    # Convert to NumPy arrays for faster operations
+    opm_status_values = table[opm_status_col].values
+    opinion_values = table[opinion_col].values
+
+    # Batch assignment using NumPy arrays
+    table[new_opm_status_col] = opm_status_values
+    table['prior_open'] = opm_status_values
+    table[new_opinion_col] = opinion_values
+
+    # CRITERIA 1: Encounter more than O who are already open
     if OPM_to_CM:
-        # add 'become CM' rules
-        no_open_to_closed = sum(table['OPM_to_CM_trigger'])
-        # if they become opm, opm parameter needs a value - jump to max of [average of those opm, opm_trigger]
-        if(no_open_to_closed >=O2):
-            # those with status 0 reach status 1
-            table.loc[table[opm_status_col]==1,new_opm_status_col]=0
-            table.loc[(table[opm_status_col]==1)&(table['first_O2']==0),'first_O2']=round_no
-        # CRITERIA 2: far from the average opinion
-        # 2b: close to average opinion - need to exclude themselves from average
-        # if they become closed, what influences their level of opm? TODO revisit this, currently set to trigger
-        #table['avg_excl'] = (table[opinion_col].sum()-table[opinion_col])/(table.shape[0]-1)
-        #table['dist_from_avg'] = abs(table[opinion_col]-table['avg_excl'])
-        #table.loc[(table[opm_status_col]==1) & (table['dist_from_avg']<B),new_opm_status_col]=0
-        #table.loc[(table[opm_status_col]==1) & (table['first_B']==0) & (table['dist_from_avg']<B),'first_B']=round_no
-        # CRITERIA 2: small constant probability of becoming open IF NOT ALREADY CM (additive?)
-        # how long have they been OPM?
-        OPM_triggers = table[['first_O','first_rho']]
-        table['OPM_time'] = round_no-np.where(OPM_triggers>0,OPM_triggers,round_no).min(axis=1)
-        table['pt'] = np.array([1-(1/(1+pt*x)) for x in table['OPM_time']])
-        table['temp_prob']=np.array([float(random.choices([1,0],weights=[1-pt,pt],k=1)[0]) for pt in table['pt']])
-        # need to keep track if already triggered pt
-        table.loc[(table[opm_status_col]==1) & (table['first_pt']==0),'first_pt']=np.multiply(1-table.loc[(table[opm_status_col]==1) & (table['first_pt']==0),'temp_prob'],round_no)
-        # only transition if haven't already
-        table.loc[(table[new_opm_status_col]==1)&(table[opm_status_col]==1),new_opm_status_col]=table.loc[(table[new_opm_status_col]==1)&(table[opm_status_col]==1),'temp_prob']
-        # add flag if OPM_to_CM triggered
-        table.loc[(table[opm_status_col]==1)&(table[new_opm_status_col]==0),'OPM_to_CM_trigger']=1
+        no_open = table['prior_open'].sum()
+
+        if no_open >= O:
+            mask = (table[opm_status_col].values == 0) & (table['OPM_to_CM_trigger'].values == 0)
+            table[new_opm_status_col].values[mask] = 1
+            table['first_O'].values[table['first_O'].values == 0] = round_no
+
+        # Calculate diversity with demography
+        rho_NGV = diverse_calc(table, demog_cols, rho, C)
+
+        # Use np.random.choice for vectorized operation
+        table['temp_prob'] = np.random.choice([0, 1], size=table.shape[0], p=[1 - rho_NGV, rho_NGV])
+
+        # First rho update
+        mask_first_rho = table['first_rho'].values == 0
+        table['first_rho'].values[mask_first_rho] = table['temp_prob'].values[mask_first_rho] * round_no
+
+        # Update OPM status based on temp_prob
+        mask_opm_status = (table[opm_status_col].values == 0) & (table['temp_prob'].values == 1) & (table['OPM_to_CM_trigger'].values == 0)
+        table[new_opm_status_col].values[mask_opm_status] = 1
+
+    # Criteria 2: Open to Closed transitions
+    if OPM_to_CM:
+        no_open_to_closed = table['OPM_to_CM_trigger'].sum()
+
+        if no_open_to_closed >= O2:
+            # Change from open to closed if O2 conditions met
+            mask_open_to_closed = table[opm_status_col].values == 1
+            table[new_opm_status_col].values[mask_open_to_closed] = 0
+            mask_first_O2 = (table[opm_status_col].values == 1) & (table['first_O2'].values == 0)
+            table['first_O2'].values[mask_first_O2] = round_no
+
+        # Calculate OPM time and probabilities using pt
+        OPM_triggers = table[['first_O', 'first_rho']].values
+        table['OPM_time'] = round_no - np.minimum.reduce(np.where(OPM_triggers > 0, OPM_triggers, round_no), axis=1)
+
+        # Calculate 'pt' and probabilities based on OPM_time
+        table['pt'] = 1 - (1 / (1 + pt * table['OPM_time']))
+        table['temp_prob'] = np.array([np.random.choice([1, 0], p=[1 - p, p]) for p in table['pt']], dtype=float)
+
+        # Update first_pt for rows meeting the criteria
+        mask_first_pt = (table[opm_status_col].values == 1) & (table['first_pt'].values == 0)
+        table['first_pt'].values[mask_first_pt] = (1 - table['temp_prob'].values[mask_first_pt]) * round_no
+
+        # Update OPM status based on temp_prob
+        mask_new_opm_status = (table[new_opm_status_col].values == 1) & (table[opm_status_col].values == 1)
+        table[new_opm_status_col].values[mask_new_opm_status] = table['temp_prob'].values[mask_new_opm_status]
+
+        # Update OPM_to_CM_trigger where applicable
+        mask_opm_to_cm_trigger = (table[opm_status_col].values == 1) & (table[new_opm_status_col].values == 0)
+        table['OPM_to_CM_trigger'].values[mask_opm_to_cm_trigger] = 1
+
+    # If opinions need to be updated
     if opinions_update:
-        # update opinions according to rules
-        table_new_opinions=opinion_update(table,round_no,table_no,exp_included,exp_opinion,exp_weight,movement_speed,mode)
-        table = table[['id','first_rho','first_O','first_pt','first_O2',opm_status_col,new_opm_status_col,'OPM_to_CM_trigger']].merge(table_new_opinions,how='left',on='id')
-    # return relevant cols
-    return table[['id','first_rho','first_O','first_pt','first_O2',new_opm_status_col,new_opinion_col,'OPM_to_CM_trigger']]
+        table_new_opinions = opinion_update(table, round_no, table_no, exp_included, exp_opinion, exp_weight, movement_speed, mode)
+        
+        # Instead of merging, use update to minimize merge overhead
+        table.update(table_new_opinions)
+
+    # Return relevant columns
+    return table[['id', 'first_rho', 'first_O', 'first_pt', 'first_O2', new_opm_status_col, new_opinion_col, 'OPM_to_CM_trigger']]
+
 
 # table_data = table
 # table_data = r1.loc[r1.allocation_1==0]
 # table_data = run_data_0.loc[(run_data_0.allocation_58==4)&(run_data_0.iteration==0)], exp_included=False,exp_weight=0.1,movement_speed=0.1
-    
-def opinion_update(table_data,round_no,table_no,exp_included,exp_opinion,exp_weight,movement_speed,mode):
-    #print("updating opinions for expert opinion "+str(exp_opinion)) # these are randomly too high
-    new_opm_status_col = 'opm_status_'+str(round_no)
-    table_col = 'allocation_'+str(round_no)
-    opinion_col = 'opinions_'+str(round_no-1)
-    new_opinion_col = 'opinions_'+str(round_no)
-    table=table_data[['id',table_col,new_opm_status_col,opinion_col]].copy()
-    table[new_opinion_col] = table[opinion_col]
-    
-    # mix with expert - mixing parameter?
-    # ADD IN MODE
-    if mode=="DeGroot":
-        # calculate average opinion (excluding agent)
-        table['total_excl'] = table[opinion_col].sum()-table[opinion_col]
-        table['avg_excl'] = table['total_excl']/(table.shape[0]-1)
-        if exp_included:
-            table['avg_with_exp']=exp_weight*exp_opinion+(1-exp_weight)*table['avg_excl']
-            table.loc[table[new_opm_status_col]==1,new_opinion_col] = movement_speed*table.loc[table[new_opm_status_col]==1,'avg_with_exp']+(1-movement_speed)*table.loc[table[new_opm_status_col]==1,opinion_col]
-        else:
-            table.loc[table[new_opm_status_col]==1,new_opinion_col] = movement_speed*table.loc[table[new_opm_status_col]==1,'avg_excl']+(1-movement_speed)*table.loc[table[new_opm_status_col]==1,opinion_col]
-    elif mode=="bounded confidence":
-        nhood_sums = []
-        nhood_counts = []
-        # only takes average of weights in neighbourhood - defined globally
-        # DEBUGGING: opinion = 1.058609
-        for opinion in table[opinion_col]:
-            nhood_frame = table.loc[(table[opinion_col]>=(opinion-nhood))&(table[opinion_col]<=(opinion+nhood)),opinion_col]
-            nhood_sum = sum(nhood_frame)
-            nhood_count = len(nhood_frame)
-            # don't weight own opinion, unless there are no others in the neighbourhood
-            if nhood_count >1:
-                nhood_count-=1
-                nhood_sum-=opinion
-            nhood_sums.append(nhood_sum)
-            nhood_counts.append(nhood_count)
-        table['total_nhood_excl'] = nhood_sums
-        table['n_nhood'] = nhood_counts
-        table['avg_excl'] = table['total_nhood_excl']/(table['n_nhood'])
-        if exp_included:
-            # also need to modify expert - only listen if in neighbourhood
-            table['expert_within_nhood']=np.where((table[opinion_col]>=(exp_opinion-nhood))&(table[opinion_col]<=(exp_opinion+nhood)),1,0)
-            table['avg_with_exp']=table['expert_within_nhood']*(exp_weight*exp_opinion+(1-exp_weight)*table['avg_excl'])+(1-table['expert_within_nhood'])*table['avg_excl']
-            table.loc[table[new_opm_status_col]==1,new_opinion_col] = movement_speed*table.loc[table[new_opm_status_col]==1,'avg_with_exp']+(1-movement_speed)*table.loc[table[new_opm_status_col]==1,opinion_col]
-        else:
-            table.loc[table[new_opm_status_col]==1,new_opinion_col] = movement_speed*table.loc[table[new_opm_status_col]==1,'avg_excl']+(1-movement_speed)*table.loc[table[new_opm_status_col]==1,opinion_col]
+
+
+
+def update_opinions_de_groot(opinions, opm_status, exp_included, exp_opinion, exp_weight, movement_speed):
+    n_agents = len(opinions)
+    total_opinions = np.sum(opinions)
+    avg_excl = (total_opinions - opinions) / (n_agents - 1)
+
+    if exp_included:
+        avg_with_exp = exp_weight * exp_opinion + (1 - exp_weight) * avg_excl
+        new_opinions = opinions + opm_status * movement_speed * (avg_with_exp - opinions)
     else:
-        print("error: mode not specified within DeGroot or bounded confidence (mode = "+str(mode)+")")
-    return table[['id', new_opinion_col]]
+        new_opinions = opinions + opm_status * movement_speed * (avg_excl - opinions)
+
+    return new_opinions
+
+
+def update_opinions_bounded_confidence(opinions, opm_status, exp_included, exp_opinion, exp_weight, movement_speed, nhood):
+    n_agents = len(opinions)
+    new_opinions = opinions.copy()
+
+    for i in range(n_agents):
+        opinion_diff = np.abs(opinions - opinions[i])
+        in_nhood = opinion_diff <= nhood
+
+        nhood_sum = np.sum(opinions[in_nhood])
+        nhood_count = np.sum(in_nhood)
+
+        # Exclude self from neighborhood
+        nhood_sum -= opinions[i]
+        nhood_count -= 1
+
+        if nhood_count > 0:
+            avg_excl = nhood_sum / nhood_count
+        else:
+            avg_excl = opinions[i]
+
+        if exp_included and np.abs(exp_opinion - opinions[i]) <= nhood:
+            avg_with_exp = exp_weight * exp_opinion + (1 - exp_weight) * avg_excl
+            new_opinions[i] = movement_speed * avg_with_exp + (1 - movement_speed) * opinions[i]
+        else:
+            new_opinions[i] = movement_speed * avg_excl + (1 - movement_speed) * opinions[i]
+
+    return new_opinions
+
+def update_opinions_weighted_median(opinions, opm_status, exp_included, exp_opinion, exp_weight, movement_speed):
+    n_agents = len(opinions)
+    new_opinions = opinions.copy()
+
+    if exp_included:
+        base_weights = [movement_speed * exp_weight] + n_agents * [movement_speed * (1 - exp_weight) / n_agents-1]
+        opinions = [exp_opinion, *opinions]
+    else:
+        base_weights = n_agents * [movement_speed * (1 - exp_weight) / n_agents - 1]
+
+    for agent_idx in range(n_agents):
+
+        # Opinion remains the same when not open-minded
+        if not opm_status[agent_idx]:
+            continue
+
+        weights = base_weights.copy()
+        weights[agent_idx+1] = 1 - movement_speed
+        new_opinions[agent_idx] = weighted_median([exp_opinion, *opinions], weights=weights)
+        
+    return new_opinions
+
+def opinion_update(table_data, round_no, table_no, exp_included, exp_opinion, exp_weight, movement_speed, mode, nhood=None):
+    """
+    Optimized version of the opinion update function.
+    
+    Parameters:
+    -----------
+    table_data : pd.DataFrame
+        DataFrame containing the agent data. Must include columns for agent IDs, allocation, opm status, and opinions.
+    round_no : int
+        The current round number.
+    exp_included : bool
+        Whether expert opinion is included in the opinion update process.
+    exp_opinion : float
+        The expert's opinion value.
+    exp_weight : float
+        The weight given to the expert's opinion (if included).
+    movement_speed : float
+        A parameter that determines how much the agents' opinions move towards the new calculated average.
+    mode : str
+        The mode of opinion dynamics: either "DeGroot" or "bounded confidence".
+    nhood : float, optional
+        The neighborhood radius used in the bounded confidence model. Only required if mode is "bounded confidence".
+    
+    Returns:
+    --------
+    pd.DataFrame
+        A DataFrame with the updated opinions for each agent.
+    
+    Raises:
+    -------
+    ValueError
+        If the mode is not recognized or if nhood is not provided for bounded confidence mode.
+    """
+    new_opm_status_col = f'opm_status_{round_no}'
+    opinion_col = f'opinions_{round_no - 1}'
+    new_opinion_col = f'opinions_{round_no}'
+    
+    opinions = table_data[opinion_col].values
+    opm_status = table_data[new_opm_status_col].values
+
+    if mode == "DeGroot":
+        new_opinions = update_opinions_de_groot(opinions, opm_status, exp_included, exp_opinion, exp_weight, movement_speed)
+    elif mode == "bounded confidence":
+        if nhood is None:
+            raise ValueError("Neighborhood radius (nhood) must be specified for bounded confidence mode.")
+        new_opinions = update_opinions_bounded_confidence(opinions, opm_status, exp_included, exp_opinion, exp_weight, movement_speed, nhood)
+    elif mode == "weighted median":
+        new_opinions = update_opinions_weighted_median(opinions, opm_status, exp_included, exp_opinion, exp_weight,
+                                                       movement_speed)
+    else:
+        raise ValueError(f"Unknown mode: {mode}. Must be 'DeGroot' or 'bounded confidence'.")
+
+    return {'id': table_data['id'], new_opinion_col: new_opinions}
 
 
 round_no=1
@@ -217,7 +320,7 @@ def round_update(data,round_no,demog_cols,rho,C,O,
                  opinions_update,exp_included,exp_opinion,exp_weight,movement_speed,mode,
                  OPM_to_CM,pt,O2):
     #print("generating for round "+str(round_no))
-    for table_no in range(N_STRONG_NODES_J):
+    for table_no in range(N_TABLES):
         #print("table "+str(table_no))
         new_opm = opm_update(data,round_no,table_no,demog_cols,rho,C,O,
                              opinions_update, exp_included, exp_opinion, exp_weight, movement_speed,mode,
@@ -261,8 +364,7 @@ def avg_over_trials(input_data,T,prop_opm,opinions_base,allocation,demog_cols,rh
                     opinions_update,exp_included,exp_opinion_array,exp_weight,movement_speed,mode,
                     OPM_to_CM,pt,O2,
                     extremists,extreme_index):
-    
-    for i in range(n_iterations):
+    for i in tqdm(range(n_iterations), desc="Iteration"):
         #print("Iteration: "+str(i))
         
         # Check if expert opinion array is a list of lists
@@ -287,210 +389,272 @@ def avg_over_trials(input_data,T,prop_opm,opinions_base,allocation,demog_cols,rh
 # openness_simulations.py line 104: input_frame = latex_plot_good, T=200, allocation = 'opt', scale_to_complete=True, n_iterations=5, importance = True
 # exp_asmyptote = experts_extreme_update[0]
 
-def double_plot(input_frame,T,allocation,n_iterations,scale_to_complete,importance,exp_asymptote):
-    # add in: if importance, need to only look at when the rules triggered a change
+def plot_opm_overview(input_frame, n_iterations, scale_to_complete, T, N_STRONG_NODES_I, save_path=None):
+    """
+    Plots the overview of OPM (Open-mindedness) status over iterations.
+
+    Parameters:
+    - input_frame (pd.DataFrame): The input DataFrame containing OPM status and iteration data.
+    - n_iterations (int): The number of iterations.
+    - scale_to_complete (bool): Whether to scale the plot to completion.
+    - T (int): The total number of iterations.
+    - N_STRONG_NODES_I (int): The number of strong nodes.
+
+    Returns:
+    - None
+    """
+    # Add in: if importance, need to only look at when the rules triggered a change
     # 4a: each round, how many opm?
-    if n_iterations==1:
-        input_frame['iteration']=1
-    opm_overview = pd.melt(input_frame[[col for col in input_frame if col.startswith(('opm_status_','iteration'))]],id_vars=['iteration'])
-    # need to replace NaNs in value
-    opm_overview = opm_overview.replace(np.nan,0)
-    opm_overview['variable'] = opm_overview.variable.str.replace('opm_status_' , '')
-    
-    # want to remove outliers, e.g. if only one or two are left to become OPM - after last iteration has converged
-    opm_min = opm_overview.groupby(['variable','iteration']).sum().reset_index()
+    if n_iterations == 1:
+        input_frame['iteration'] = 1
+
+    opm_overview = pd.melt(input_frame[[col for col in input_frame if col.startswith(('opm_status_', 'iteration'))]], id_vars=['iteration'])
+    # Replace NaNs in value
+    opm_overview = opm_overview.replace(np.nan, 0)
+    opm_overview['variable'] = opm_overview.variable.str.replace('opm_status_', '')
+
+    # Remove outliers, e.g., if only one or two are left to become OPM - after last iteration has converged
+    opm_min = opm_overview.groupby(['variable', 'iteration']).sum().reset_index()
     opm_min.variable = opm_min.variable.astype(float)
-    if len(opm_min.loc[opm_min.value==0,].groupby('iteration')['variable']) == 0:
+    if len(opm_min.loc[opm_min.value == 0,].groupby('iteration')['variable']) == 0:
         first_0 = T
     else:
-        first_0 = max(opm_min.loc[opm_min.value==0,].groupby('iteration')['variable'].min()) # this will never be 0, as always some start with OPM=1
+        first_0 = max(opm_min.loc[opm_min.value == 0,].groupby('iteration')['variable'].min())  # This will never be 0, as always some start with OPM=1
+
     opm_grouped = opm_overview.groupby('variable').sum().reset_index()
     opm_grouped.variable = opm_grouped.variable.astype(float)
-    late_entrants = sum(opm_grouped.loc[opm_grouped.variable>=first_0,"value"])
-    time_to_consensus = max(opm_grouped.loc[opm_grouped.value!=0,"variable"])+1
-    if time_to_consensus!=(first_0):
+    late_entrants = sum(opm_grouped.loc[opm_grouped.variable >= first_0, "value"])
+    time_to_consensus = max(opm_grouped.loc[opm_grouped.value != 0, "variable"]) + 1
+    if time_to_consensus != first_0:
         print("Note: not all individuals were OPM by the time we reached 0 aggregate (" + str(late_entrants) + " individuals remaining CM)")
-        time_to_consensus=first_0
-    #print("NOTE: CONSENSUS NOT REACHED IN " + str(T) + " ROUNDS")
+        time_to_consensus = first_0
+
     if scale_to_complete:
-        opm_grouped = opm_grouped.loc[opm_grouped['variable']<=time_to_consensus,]
-        opm_grouped.variable = 100*opm_grouped['variable']/time_to_consensus
-    opm_grouped = opm_grouped.sort_values('variable').reset_index()[['variable','value']]
-    # standardise based on number of iterations we're averaging over
-    opm_grouped.value = opm_grouped['value']/n_iterations
-    # NEED TO ADD ERROR BARS - one standard error away
-    if n_iterations>1:
-        opm_round_values = opm_overview.groupby(['iteration','variable']).sum().reset_index()
-        opm_round_values['variable'] = opm_round_values.variable.str.replace('opm_status_' , '')
+        opm_grouped = opm_grouped.loc[opm_grouped['variable'] <= time_to_consensus,]
+        opm_grouped.variable = 100 * opm_grouped['variable'] / time_to_consensus
+
+    opm_grouped = opm_grouped.sort_values('variable').reset_index()[['variable', 'value']]
+    # Standardize based on number of iterations we're averaging over
+    opm_grouped.value = opm_grouped['value'] / n_iterations
+
+    # Add error bars - one standard error away
+    if n_iterations > 1:
+        opm_round_values = opm_overview.groupby(['iteration', 'variable']).sum().reset_index()
+        opm_round_values['variable'] = opm_round_values.variable.str.replace('opm_status_', '')
         opm_round_values.variable = opm_round_values.variable.astype(float)
         if scale_to_complete:
-            #opm_round_values = opm_round_values.loc[opm_round_values['variable']<=time_to_consensus,]
-            opm_round_values.variable = 100*opm_round_values['variable']/time_to_consensus
-        #https://matplotlib.org/stable/gallery/lines_bars_and_markers/errorbar_limits_simple.html#sphx-glr-gallery-lines-bars-and-markers-errorbar-limits-simple-py
-        opm_errors = pd.merge(opm_round_values,opm_grouped,on='variable')
-        opm_errors['num']=(opm_errors['value_x']-opm_errors['value_y'])**2
-        # want a standard error for every 'variable' (i.e. round number)
-        opm_error_values = opm_errors.groupby('variable').sum().reset_index()[['variable','num']]
-        opm_error_values['num'] = np.sqrt(opm_error_values['num']/n_iterations)
-    opm_grouped.columns=['Round','Cumulative OPM']
-    plt.plot(opm_grouped['Round'],opm_grouped['Cumulative OPM'])
-    if n_iterations>1:
-        plt.errorbar(opm_grouped['Round'],opm_grouped['Cumulative OPM'],yerr=opm_error_values['num'])
-    #plt.title('Cumulative OPM by round for table allocation setting: '+str(allocation))
-    plt.ylim(0,N_STRONG_NODES_I)
-    plt.ylabel('cumulative # agents with OPM status 1')
+            opm_round_values.variable = 100 * opm_round_values['variable'] / time_to_consensus
+
+        opm_errors = pd.merge(opm_round_values, opm_grouped, on='variable')
+        opm_errors['num'] = (opm_errors['value_x'] - opm_errors['value_y']) ** 2
+        # Standard error for every 'variable' (i.e., round number)
+        opm_error_values = opm_errors.groupby('variable').sum().reset_index()[['variable', 'num']]
+        opm_error_values['num'] = np.sqrt(opm_error_values['num'] / n_iterations)
+
+    opm_grouped.columns = ['Round', 'Cumulative OPM']
+    plt.plot(opm_grouped['Round'], opm_grouped['Cumulative OPM'])
+    if n_iterations > 1:
+        plt.errorbar(opm_grouped['Round'], opm_grouped['Cumulative OPM'], yerr=opm_error_values['num'])
+
+    plt.ylim(0, N_STRONG_NODES_I)
+    plt.ylabel('Cumulative # agents with OPM status 1')
     if scale_to_complete:
         x_lim = 100
     else:
-        x_lim = T+1
-    plt.xlim(0,x_lim)
-    if(scale_to_complete):
+        x_lim = T + 1
+    plt.xlim(0, x_lim)
+    if scale_to_complete:
         plt.xlabel('% of rounds until convergence')
     else:
         plt.xlabel('# rounds')
-        
+
     print("Plot 1 complete")
-    plt.show()
-    plt.close()
+    display_figure(save_path, "opm_overview")
     
+    return opm_grouped, time_to_consensus
+
+def plot_opm_influence(input_frame, n_iterations, scale_to_complete, time_to_consensus, N_STRONG_NODES_I, importance, save_path=None):
+    """
+    Plots the influence of different OPM (Open-mindedness) rules over iterations.
+
+    Parameters:
+    - input_frame (pd.DataFrame): The input DataFrame containing OPM status and iteration data.
+    - n_iterations (int): The number of iterations.
+    - scale_to_complete (bool): Whether to scale the plot to completion.
+    - time_to_consensus (int): The time to consensus.
+    - N_STRONG_NODES_I (int): The number of strong nodes.
+    - importance (bool): Whether to consider the importance of rules.
+
+    Returns:
+    - prob_grouped (pd.DataFrame): The grouped DataFrame containing the influence of different rules.
+    """
     # 4b: how many because of prob
     if importance:
         # for each individual, only need to keep their lowest first
-        prob_inspect = input_frame[['first_O','first_rho']]
+        prob_inspect = input_frame[['first_O', 'first_rho']]
         # 0 out any entries that are not the lowest - NEED TO INCLUDE pi_0
-        prob_inspect['lowest']=np.where(prob_inspect>0,prob_inspect,np.inf).min(axis=1)
-        prob_inspect.loc[prob_inspect.first_O!=prob_inspect.lowest,'first_O'] = 0
-        prob_inspect.loc[prob_inspect.first_rho!=prob_inspect.lowest,'first_rho'] = 0
-        prob_bind=pd.concat([input_frame['opm_0'],prob_inspect],axis=1)
+        prob_inspect['lowest'] = np.where(prob_inspect > 0, prob_inspect, np.inf).min(axis=1)
+        prob_inspect.loc[prob_inspect.first_O != prob_inspect.lowest, 'first_O'] = 0
+        prob_inspect.loc[prob_inspect.first_rho != prob_inspect.lowest, 'first_rho'] = 0
+        prob_bind = pd.concat([input_frame['opm_0'], prob_inspect], axis=1)
         # 0 out those who were initialised OPM
-        prob_bind.loc[prob_bind['opm_0']==1,'first_O']=0
-        prob_bind.loc[prob_bind['opm_0']==1,'first_rho']=0
-        prob_melt = pd.melt(prob_bind[['first_rho','first_O']])
+        prob_bind.loc[prob_bind['opm_0'] == 1, 'first_O'] = 0
+        prob_bind.loc[prob_bind['opm_0'] == 1, 'first_rho'] = 0
+        prob_melt = pd.melt(prob_bind[['first_rho', 'first_O']])
         # OPM to CM
-        prob_inspect_2 = input_frame[['first_pt','first_O2']]
+        prob_inspect_2 = input_frame[['first_pt', 'first_O2']]
         # 0 out any entries that are not the lowest - NEED TO INCLUDE pi_0
-        prob_inspect_2['lowest']=np.where(prob_inspect_2>0,prob_inspect_2,np.inf).min(axis=1)
-        prob_inspect_2.loc[prob_inspect_2.first_pt!=prob_inspect_2.lowest,'first_pt'] = 0
-        prob_inspect_2.loc[prob_inspect_2.first_O2!=prob_inspect_2.lowest,'first_O2'] = 0
-        prob_melt_2 = pd.melt(prob_inspect_2[['first_pt','first_O2']])
-        prob_melt_all = pd.concat([prob_melt,prob_melt_2])
+        prob_inspect_2['lowest'] = np.where(prob_inspect_2 > 0, prob_inspect_2, np.inf).min(axis=1)
+        prob_inspect_2.loc[prob_inspect_2.first_pt != prob_inspect_2.lowest, 'first_pt'] = 0
+        prob_inspect_2.loc[prob_inspect_2.first_O2 != prob_inspect_2.lowest, 'first_O2'] = 0
+        prob_melt_2 = pd.melt(prob_inspect_2[['first_pt', 'first_O2']])
+        prob_melt_all = pd.concat([prob_melt, prob_melt_2])
     else:
-        prob_melt = pd.melt(input_frame[['first_rho','first_O']])
-        prob_melt_2 = pd.melt(input_frame[['first_pt','first_O2']])
-        prob_melt_all = pd.concat([prob_melt,prob_melt_2])
-    prob_grouped = prob_melt_all.groupby(['variable','value']).size().reset_index()
-    prob_grouped = prob_grouped[prob_grouped.value!=0]
-    prob_grouped = prob_grouped.pivot(index='value',columns='variable',values=0).reset_index()
+        prob_melt = pd.melt(input_frame[['first_rho', 'first_O']])
+        prob_melt_2 = pd.melt(input_frame[['first_pt', 'first_O2']])
+        prob_melt_all = pd.concat([prob_melt, prob_melt_2])
+
+    prob_grouped = prob_melt_all.groupby(['variable', 'value']).size().reset_index()
+    prob_grouped = prob_grouped[prob_grouped.value != 0]
+    prob_grouped = prob_grouped.pivot(index='value', columns='variable', values=0).reset_index()
     # replace na values
     prob_grouped = prob_grouped.fillna(0)
     # need to factor in for when a variable has no influence
     if 'first_rho' not in prob_grouped.columns:
-        prob_grouped['first_rho']=0
+        prob_grouped['first_rho'] = 0
     if 'first_O' not in prob_grouped.columns:
-        prob_grouped['first_O']=0
+        prob_grouped['first_O'] = 0
     if 'first_pt' not in prob_grouped.columns:
-        prob_grouped['first_pt']=0
+        prob_grouped['first_pt'] = 0
     if 'first_O2' not in prob_grouped.columns:
-        prob_grouped['first_O2']=0
+        prob_grouped['first_O2'] = 0
+
     prob_grouped['rho_csum'] = prob_grouped.first_rho.cumsum()
     prob_grouped['O_csum'] = prob_grouped.first_O.cumsum()
     prob_grouped['pt_csum'] = prob_grouped.first_pt.cumsum()
     prob_grouped['O2_csum'] = prob_grouped.first_O2.cumsum()
-    prob_grouped = prob_grouped.rename(columns = {'value':'Round'})
+    prob_grouped = prob_grouped.rename(columns={'value': 'Round'})
+
     if scale_to_complete:
         prob_grouped.Round = prob_grouped.Round.astype(float)
-        #prob_grouped = prob_grouped.loc[prob_grouped['Round']<=time_to_consensus,]
-        prob_grouped.Round = 100*prob_grouped['Round']/time_to_consensus
-    
-    plt.plot(prob_grouped['Round'], prob_grouped['rho_csum']/n_iterations, label = "rho", color="red")
-    plt.plot(prob_grouped['Round'], prob_grouped['O_csum']/n_iterations, label = "O",color="orange")
+        prob_grouped.Round = 100 * prob_grouped['Round'] / time_to_consensus
+
+    plt.plot(prob_grouped['Round'], prob_grouped['rho_csum'] / n_iterations, label="rho", color="red")
+    plt.plot(prob_grouped['Round'], prob_grouped['O_csum'] / n_iterations, label="O", color="orange")
     plt.legend()
-    #plt.title('Influence of different OPM rules for table allocation setting: '+str(allocation))
     plt.ylim(0, N_STRONG_NODES_I)
-    if(importance):
+    if importance:
         plt.ylabel('cumulative # agents becoming OPM due to each rule')
     else:
         plt.ylabel('cumulative # agents triggering each rule')
-    if(scale_to_complete):
+    if scale_to_complete:
         plt.xlabel('% of rounds until convergence')
     else:
         plt.xlabel('# rounds')
-    plt.xlim(0,x_lim)
-    
+    plt.xlim(0, 100 if scale_to_complete else time_to_consensus + 1)
+
     print("Plot 2 complete")
-    plt.show()
-    plt.close()
+    display_figure(save_path, "opm_influence")
     
-    plt.plot(prob_grouped['Round'], prob_grouped['pt_csum']/n_iterations, '--', label = "R", color="red")
-    plt.plot(prob_grouped['Round'], prob_grouped['O2_csum']/n_iterations, '--', label = "O'",color="orange")
-    #plt.plot(prob_grouped['Round'], prob_grouped['B_csum']/n_iterations, '--', label = "B",color="blue")
+    return prob_grouped
+
+def plot_simulation_results(prob_grouped, n_iterations, N_STRONG_NODES_I, importance, scale_to_complete, x_lim, save_path=None):
+    """
+    Plots the simulation results based on the provided data.
+
+    Parameters:
+    prob_grouped (DataFrame): DataFrame containing the grouped probabilities.
+    n_iterations (int): Number of iterations for normalization.
+    N_STRONG_NODES_I (int): Y-axis limit for the plot.
+    importance (bool): Flag to determine the ylabel.
+    scale_to_complete (bool): Flag to determine the xlabel.
+    x_lim (int): X-axis limit for the plot.
+
+    Returns:
+    None
+    """
+    plt.plot(prob_grouped['Round'], prob_grouped['pt_csum']/n_iterations, '--', label="R", color="red")
+    plt.plot(prob_grouped['Round'], prob_grouped['O2_csum']/n_iterations, '--', label="O'", color="orange")
+    # plt.plot(prob_grouped['Round'], prob_grouped['B_csum']/n_iterations, '--', label="B", color="blue")
     plt.legend()
-    #plt.title('Influence of different CM rules for table allocation setting: '+str(allocation))
+    # plt.title('Influence of different CM rules for table allocation setting: '+str(allocation))
     plt.ylim(0, N_STRONG_NODES_I)
-    if(importance):
+    if importance:
         plt.ylabel('cumulative # agents becoming CPM due to each rule')
     else:
         plt.ylabel('cumulative # agents triggering each rule')
-    if(scale_to_complete):
+    if scale_to_complete:
         plt.xlabel('% of rounds until convergence')
     else:
         plt.xlabel('# rounds')
-    plt.xlim(0,x_lim)
+    plt.xlim(0, x_lim)
     
     print("Plot 3 complete")
-    plt.show()
-    plt.close()
     
+    display_figure(save_path, "simulation_results")
+
+def plot_opinion_shift(input_frame, n_iterations, exp_asymptote, scale_to_complete, time_to_consensus, x_lim, save_path=None):
+    """
+    Plots the opinion shift over time based on the provided data.
+
+    Parameters:
+    input_frame (DataFrame): DataFrame containing the input data.
+    n_iterations (int): Number of iterations for normalization.
+    exp_asymptote (int or list): Expert asymptote values.
+    scale_to_complete (bool): Flag to determine the xlabel.
+    time_to_consensus (int): Time to consensus for scaling rounds.
+    x_lim (int): X-axis limit for the plot.
+
+    Returns:
+    None
+    """
     # 4c: add in opinion shift - just average opinions? Don't want to truncate by time step
-    opinion_overview = pd.melt(input_frame[[col for col in input_frame if col.startswith(('opinions_','iteration','id'))]],id_vars=['iteration','id'])
+    opinion_overview = pd.melt(input_frame[[col for col in input_frame if col.startswith(('opinions_','iteration','id'))]], id_vars=['iteration','id'])
     # need to replace final NaNs with final opinions for each individual
     final_opinions = opinion_overview.groupby(['iteration','id']).last().reset_index()[['iteration','id','value']]
-    final_opinions.columns=['iteration','id','value_fill']
-    opinion_overview = pd.merge(opinion_overview,final_opinions,on=['iteration','id'],how='left')
-    opinion_overview.value.fillna(opinion_overview.value_fill,inplace=True)
-    opinion_overview = opinion_overview.drop('value_fill',axis=1)
-    opinion_overview['variable'] = opinion_overview.variable.str.replace('opinions_' , '')
+    final_opinions.columns = ['iteration','id','value_fill']
+    opinion_overview = pd.merge(opinion_overview, final_opinions, on=['iteration','id'], how='left')
+    opinion_overview.value.fillna(opinion_overview.value_fill, inplace=True)
+    opinion_overview = opinion_overview.drop('value_fill', axis=1)
+    opinion_overview['variable'] = opinion_overview.variable.str.replace('opinions_', '')
     opinion_grouped = opinion_overview.groupby('variable').mean().reset_index()
     opinion_grouped.variable = opinion_grouped.variable.astype(float)
-    if n_iterations>1:
+    
+    if n_iterations > 1:
         opinion_round_values = opinion_overview.groupby(['iteration','variable']).mean().reset_index()
         opinion_round_values.variable = opinion_round_values.variable.astype(float)
-        opinion_errors = pd.merge(opinion_round_values,opinion_grouped[['variable','value']],on='variable')
-        opinion_errors['num']=(opinion_errors['value_x']-opinion_errors['value_y'])**2
+        opinion_errors = pd.merge(opinion_round_values, opinion_grouped[['variable','value']], on='variable')
+        opinion_errors['num'] = (opinion_errors['value_x'] - opinion_errors['value_y'])**2
         # want a standard error for every 'variable' (i.e. round number)
         opinion_error_values = opinion_errors.groupby('variable').sum().reset_index()[['variable','num']]
-        opinion_error_values['num'] = np.sqrt(opinion_error_values['num']/n_iterations)
-    opinion_grouped = opinion_grouped.sort_values('variable').reset_index()[['variable','value']]
-    opinion_grouped.columns=['Round','Average opinion']
+        opinion_error_values['num'] = np.sqrt(opinion_error_values['num'] / n_iterations)
+        
+    # Next function requires errors so something needs to be returned
+    else:
+        opinion_error_values = None
     
-    print("Plot 4 half complete")
+    opinion_grouped = opinion_grouped.sort_values('variable').reset_index()[['variable','value']]
+    opinion_grouped.columns = ['Round', 'Average opinion']
     
     # add 75% bars
-    opinion_75 = pd.melt(input_frame[[col for col in input_frame if col.startswith(('opinions_','iteration','id'))]],id_vars=['iteration','id'])
-    opinion_75 = pd.merge(opinion_75 ,final_opinions,on=['iteration','id'],how='left')
-    opinion_75.value.fillna(opinion_75.value_fill,inplace=True)
-    opinion_75 = opinion_75.drop('value_fill',axis=1)
-    opinion_75['variable'] = opinion_75.variable.str.replace('opinions_' , '')
+    opinion_75 = pd.melt(input_frame[[col for col in input_frame if col.startswith(('opinions_','iteration','id'))]], id_vars=['iteration','id'])
+    opinion_75 = pd.merge(opinion_75, final_opinions, on=['iteration','id'], how='left')
+    opinion_75.value.fillna(opinion_75.value_fill, inplace=True)
+    opinion_75 = opinion_75.drop('value_fill', axis=1)
+    opinion_75['variable'] = opinion_75.variable.str.replace('opinions_', '')
     opinion_75.variable = opinion_75.variable.astype(float)
-    # want to group by variable, order by value, and find 25 and 75 values
-    #lq=opinion_75.groupby('variable').quantile(0.25).reset_index().sort_values('variable')
-    #uq=opinion_75.groupby('variable').quantile(0.75).reset_index().sort_values('variable')
     # moving to a single standard deviation away
     sd = opinion_75.groupby(['variable','iteration']).agg("var").reset_index()
     sd['value'] = np.sqrt(sd['value'])
     sd = sd.groupby('variable')['value'].mean()
     opinion_grouped['sd'] = sd
-    opinion_grouped['lq'] = opinion_grouped['Average opinion']-opinion_grouped['sd']
-    opinion_grouped['uq'] = opinion_grouped['Average opinion']+opinion_grouped['sd']
-    
-    print("Plot 4 three-quarters complete")
+    opinion_grouped['lq'] = opinion_grouped['Average opinion'] - opinion_grouped['sd']
+    opinion_grouped['uq'] = opinion_grouped['Average opinion'] + opinion_grouped['sd']
     
     if type(exp_asymptote) == int:
-        exp_asymptote_copy = [exp_asymptote]*opinion_grouped.shape[0]
-        
+        exp_asymptote_copy = [exp_asymptote] * opinion_grouped.shape[0]
     else:
         exp_asymptote_copy = exp_asymptote.copy()
-        
         # Keep on extending expert asymptote until end of data, fill with last value
         if len(exp_asymptote_copy) < opinion_grouped.shape[0]:
             while len(exp_asymptote_copy) != opinion_grouped.shape[0]: 
@@ -498,97 +662,122 @@ def double_plot(input_frame,T,allocation,n_iterations,scale_to_complete,importan
         elif len(exp_asymptote_copy) >= opinion_grouped.shape[0]:
             exp_asymptote_copy = exp_asymptote_copy[:opinion_grouped.shape[0]]
     
-    opinion_grouped['expert']=exp_asymptote_copy[0:opinion_grouped.shape[0]]
+    opinion_grouped['expert'] = exp_asymptote_copy[0:opinion_grouped.shape[0]]
     
     if scale_to_complete:
-        opinion_grouped.Round = 100*opinion_grouped['Round']/time_to_consensus
+        opinion_grouped.Round = 100 * opinion_grouped['Round'] / time_to_consensus
         
-    plt.plot(opinion_grouped['Round'],opinion_grouped['Average opinion'],color='red')
+    plt.plot(opinion_grouped['Round'], opinion_grouped['Average opinion'], color='red')
     # need to add 75% error bars
-    plt.plot(opinion_grouped['Round'],opinion_grouped['lq'],'--',color='blue')
-    plt.plot(opinion_grouped['Round'],opinion_grouped['uq'],'--',color='blue')
+    plt.plot(opinion_grouped['Round'], opinion_grouped['lq'], '--', color='blue')
+    plt.plot(opinion_grouped['Round'], opinion_grouped['uq'], '--', color='blue')
     if exp_asymptote_copy != "-":
-        plt.plot(opinion_grouped['Round'],opinion_grouped['expert'],linestyle="",marker = "o")
-    if n_iterations>1:
-        plt.errorbar(opinion_grouped['Round'],opinion_grouped['Average opinion'],yerr=opinion_error_values['num'],color="red")
-    #plt.title('Average opinion by round for table allocation setting: '+str(allocation))
-    plt.ylim(0,10)
-    # add expert asymptotes
-    #if exp_asymptote != "-":
-        # want to add a line for expert presentations
-        
-        #if type(exp_asymptote)==int:
-        #    plt.axhline(y = exp_asymptote, color = 'r', linestyle = '--')
-        #else:
-        #    for hline in exp_asymptote:
-        #        plt.axhline(y = hline, color = 'r', linestyle = '--')
+        plt.plot(opinion_grouped['Round'], opinion_grouped['expert'], linestyle="", marker="o")
+    if n_iterations > 1:
+        plt.errorbar(opinion_grouped['Round'], opinion_grouped['Average opinion'], yerr=opinion_error_values['num'], color="red")
+    plt.ylim(0, 10)
     plt.ylabel('average opinion (with LQ+UQ)')
-    if(scale_to_complete):
+    if scale_to_complete:
         plt.xlabel('% of rounds until convergence')
     else:
         plt.xlabel('t')
-    plt.xlim(0,x_lim)
+    plt.xlim(0, x_lim)
     
     print("Plot 4 complete")
-    plt.show()
-    plt.close()
     
-    # final plot - all OPM on a single view
-    # a
-    plt.plot(opm_grouped['Round'],opm_grouped['Cumulative OPM'])
-    if n_iterations>1:
-        plt.errorbar(opm_grouped['Round'],opm_grouped['Cumulative OPM'],yerr=opm_error_values['num'],color='orange',label='# agents OPM')
-    #plt.title('Cumulative OPM by round for table allocation setting: '+str(allocation))
+    display_figure(save_path=save_path, figure_name="opinion_shift")
+    
+    return opinion_error_values
+
+
+def plot_opm_and_prob_grouped(opm_grouped, prob_grouped, opm_error_values, n_iterations, N_STRONG_NODES_I, scale_to_complete, T, importance, save_path=None):
+    """
+    Plots the OPM and probability grouped data.
+
+    Parameters:
+    opm_grouped (DataFrame): DataFrame containing the grouped OPM data.
+    prob_grouped (DataFrame): DataFrame containing the grouped probability data.
+    opm_error_values (DataFrame): DataFrame containing the error values for OPM.
+    n_iterations (int): Number of iterations for normalization.
+    N_STRONG_NODES_I (int): Y-axis limit for the plot.
+    scale_to_complete (bool): Flag to determine the xlabel.
+    T (int): Total number of rounds.
+    importance (bool): Flag to determine the ylabel.
+
+    Returns:
+    None
+    """
+    plt.plot(opm_grouped['Round'], opm_grouped['Cumulative OPM'])
+    if n_iterations > 1:
+        plt.errorbar(opm_grouped['Round'], opm_grouped['Cumulative OPM'], yerr=opm_error_values['num'], color='orange', label='# agents OPM')
     plt.legend()
-    plt.ylim(0,N_STRONG_NODES_I)
+    plt.ylim(0, N_STRONG_NODES_I)
     if scale_to_complete:
         x_lim = 100
     else:
-        x_lim = T+1
-    plt.xlim(0,x_lim)
-    if(scale_to_complete):
+        x_lim = T + 1
+    plt.xlim(0, x_lim)
+    if scale_to_complete:
         plt.xlabel('% of rounds until convergence')
     else:
         plt.xlabel('# rounds')
     
-    
-    plt.plot(prob_grouped['Round'], prob_grouped['rho_csum']/n_iterations, label = "rho", color="red")
-    plt.plot(prob_grouped['Round'], prob_grouped['O_csum']/n_iterations, label = "O",color="orange")
+    plt.plot(prob_grouped['Round'], prob_grouped['rho_csum'] / n_iterations, label="rho", color="red")
+    plt.plot(prob_grouped['Round'], prob_grouped['O_csum'] / n_iterations, label="O", color="orange")
     plt.legend()
-    #plt.title('Influence of different OPM rules for table allocation setting: '+str(allocation))
     plt.ylim(0, N_STRONG_NODES_I)
-    if(importance):
+    if importance:
         plt.ylabel('cumulative # agents becoming OPM due to each rule')
     else:
         plt.ylabel('cumulative # agents triggering each rule')
-    if(scale_to_complete):
+    if scale_to_complete:
         plt.xlabel('% of rounds until convergence')
     else:
         plt.xlabel('# rounds')
-    plt.xlim(0,x_lim)
-    plt.plot(prob_grouped['Round'], prob_grouped['pt_csum']/n_iterations, '--', label = "p", color="red")
-    plt.plot(prob_grouped['Round'], prob_grouped['O2_csum']/n_iterations, '--', label = "O'",color="orange")
-    #plt.plot(prob_grouped['Round'], prob_grouped['B_csum']/n_iterations, '--', label = "B",color="blue")
+    plt.xlim(0, x_lim)
+    
+    plt.plot(prob_grouped['Round'], prob_grouped['pt_csum'] / n_iterations, '--', label="p", color="red")
+    plt.plot(prob_grouped['Round'], prob_grouped['O2_csum'] / n_iterations, '--', label="O'", color="orange")
     plt.legend()
-    #plt.title('Influence of different CM rules for table allocation setting: '+str(allocation))
     plt.ylim(0, N_STRONG_NODES_I)
-    if(importance):
+    if importance:
         plt.ylabel('cumulative # agents')
     else:
         plt.ylabel('cumulative # agents triggering each rule')
-    if(scale_to_complete):
+    if scale_to_complete:
         plt.xlabel('% of rounds until convergence')
     else:
         plt.xlabel('# rounds')
-    plt.xlim(0,x_lim)
+    plt.xlim(0, x_lim)
     
     print("Plot 5 complete")
-    plt.show()
+    display_figure(save_path=save_path, figure_name="opm_and_prob_grouped")
+
+def display_figure(save_path=None, figure_name=None):
+    if save_path is not None and figure_name is not None:
+        
+        if not os.path.exists(save_path):
+            os.makedirs(save_path)
+        
+        plt.savefig(f"{save_path}/{figure_name}.png")
+    else:
+        plt.show()
     
+    plt.close()
+
+# Skip the errorneous plots for now
+def double_plot(input_frame,T,allocation,n_iterations,scale_to_complete,importance,exp_asymptote,save_path=None):
     
+    opm_grouped, time_to_consensus = plot_opm_overview(input_frame, n_iterations, scale_to_complete, T, N_STRONG_NODES_I, save_path=save_path)
     
+    #prob_grouped = plot_opm_influence(input_frame, n_iterations, scale_to_complete, T, N_STRONG_NODES_I, importance, save_path=save_path)
     
+    #plot_simulation_results(prob_grouped, n_iterations, N_STRONG_NODES_I, importance, scale_to_complete, x_lim=T, save_path=save_path)
     
+    opm_error_values = plot_opinion_shift(input_frame, n_iterations, exp_asymptote, scale_to_complete, time_to_consensus, x_lim=T, save_path=save_path)
+    
+    #plot_opm_and_prob_grouped(opm_grouped, prob_grouped, opm_error_values, n_iterations, N_STRONG_NODES_I, scale_to_complete, T, importance, save_path=save_path)
+       
     
 # data = isolate_fit_opt
     
@@ -683,158 +872,158 @@ def fit_exp_to_O(data,pad_0,scale_to_100,method,importance):
     ax.legend()
 
 
+def calculate_R1(bound_opinions):
+    """
+    Calculate R1: Difference between mean final opinion and mean initial opinion.
+    """
+    mean_final = bound_opinions.loc[bound_opinions['type'] == "Last"]['value'].mean()
+    mean_initial = bound_opinions.loc[bound_opinions['type'] == "First"]['value'].mean()
+    return mean_final - mean_initial
 
-
-
-
-
-
-def opinion_analysis(data,experts,expert_input,n_iterations,extreme_index):
-    opinion_overview = pd.melt(data[[col for col in data if col.startswith(('opinions_','iteration','id'))]],id_vars=['iteration','id'])
-    opinion_overview['variable'] = opinion_overview.variable.str.replace('opinions_' , '')
-    opinion_overview.variable = opinion_overview.variable.astype(float)
-    # what is the maximal round number?
-    max_round = max(opinion_overview.variable)
-    # drop na rows
-    opinion_overview = opinion_overview[opinion_overview['value'].notna()].sort_values(by='variable')
-    opinion_grouped = opinion_overview.groupby(['iteration','id'])
-    bound_opinions = pd.concat([opinion_grouped.head(1),opinion_grouped.tail(1)]).drop_duplicates().sort_values(['iteration','id']).reset_index(drop=True)
-    bound_opinions['type'] = np.where(bound_opinions['variable']==0,"First","Last")
-    # also want to add round where they reached final opinion - within 0.01 of last opinion
-    last_opinions = bound_opinions.loc[bound_opinions.type=="Last",['iteration','id','value']]
-    last_opinions = last_opinions.rename(columns={'value':'last_value'})
-    last_opinion_reached = pd.merge(opinion_overview,last_opinions,on=['iteration','id'],how='left')
-    last_opinion_reached['within'] = np.where((last_opinion_reached['value']-last_opinion_reached['last_value']<=0.01)&(last_opinion_reached['value']-last_opinion_reached['last_value']>=-0.01),1,0)
-    # want last round where within = 0, then take following result
-    last_opinions_merge = last_opinion_reached.loc[last_opinion_reached['within']==0].groupby(['iteration','id']).last().reset_index()[['iteration','id','variable']]
-    last_opinions_merge.variable = np.where(last_opinions_merge['variable']==max_round,last_opinions_merge['variable'],last_opinions_merge['variable']+1)
-    last_opinions_merge['type'] = 'Mid'
-    # no rows for those whose opinions never changed - need to treat differently if commited minority
-    # merge on actual opinion
-    last_opinions_merge = pd.merge(last_opinions_merge,last_opinion_reached[['iteration','id','variable','value']],on=['iteration','id','variable'],how='left')[['iteration','id','variable','value','type']]
-    
-    # Update from append to concat
-    bound_opinions = pd.concat([bound_opinions, last_opinions_merge], ignore_index=True)
-    
-    # add rows for those whose opinions never changed
-    no_change = bound_opinions.groupby(['id','iteration']).count().reset_index()
-    no_change_ind = no_change.loc[no_change.type==2][['id','iteration']]
-    # check these cases exist
-    if no_change_ind.shape[0] > 0:
-        no_change_ind = pd.merge(no_change_ind,bound_opinions,on=['id','iteration'],how='left')
-        no_change_ind = no_change_ind.loc[no_change_ind['type']=="First"]
-        no_change_ind['type']="Mid"
-        bound_opinions = bound_opinions.append(no_change_ind,ignore_index=True)
-    # also want to add first opinion shift - when did they start moving?
-    first_opinions = bound_opinions.loc[bound_opinions.type=="First",['iteration','id','value']]
-    first_opinions = first_opinions.rename(columns={'value':'first_value'})
-    first_opinion_reached = pd.merge(opinion_overview,first_opinions,on=['iteration','id'],how='left')
-    first_opinion_reached['within'] = np.where(first_opinion_reached['value']-first_opinion_reached['first_value']==0,1,0)
-    # want last round where within = 1, then take following result
-    first_opinions_merge = first_opinion_reached.loc[first_opinion_reached['within']==1].groupby(['iteration','id']).last().reset_index()[['iteration','id','variable']]
-    #first_opinions_merge.variable = np.where(first_opinions_merge['variable']==max_round,first_opinions_merge['variable'],first_opinions_merge['variable']+1)
-    first_opinions_merge['type'] = 'Start'
-    # convert those who never change back to 0
-    first_opinions_check = pd.merge(first_opinions_merge,bound_opinions.loc[bound_opinions.type=="Last"][['iteration','id','variable']].rename(columns={"variable":"last_vbl"}),on=['iteration','id'],how='left')
-    first_opinions_check.loc[first_opinions_check.variable == first_opinions_check.last_vbl,"variable"] = 0
-    # merge on actual opinion
-    first_opinions_merge = pd.merge(first_opinions_check[['iteration','id','variable','type']],first_opinion_reached[['iteration','id','variable','value']],on=['iteration','id','variable'],how='left')[['iteration','id','variable','value','type']]
-
-    # use concat instead
-    bound_opinions = pd.concat([bound_opinions, first_opinions_merge], ignore_index=True)
-    
-    # add rows for those whose opinions never changed
-    no_change = bound_opinions.groupby(['id','iteration']).count().reset_index()
-    no_change_ind = no_change.loc[no_change.type==3][['id','iteration']]
-    # check these cases exist
-    if no_change_ind.shape[0] > 0:
-        no_change_ind = pd.merge(no_change_ind,bound_opinions,on=['id','iteration'],how='left')
-        no_change_ind = no_change_ind.loc[no_change_ind['type']=="First"]
-        no_change_ind['type']="Start"
-        bound_opinions = bound_opinions.append(no_change_ind,ignore_index=True)    
-    # now we have data, want to extract meaning:
-    # a) mean final opinion
-    mean_final = bound_opinions.loc[bound_opinions['type']=="Last"]['value'].mean()
-    # b) mean initial opinion
-    mean_initial = bound_opinions.loc[bound_opinions['type']=="First"]['value'].mean()
-    # c) mean expert opinion
+def calculate_R2(bound_opinions, expert_input, max_round):
+    """
+    Calculate R2: Difference between mean initial and final deviation from expert opinion.
+    """
     expert_redux = expert_input[0:int(max_round)]
     mean_expert = expert_redux.mean()
-    # R1 and R2
-    R1 = mean_final-mean_initial
-    #R2a = abs(mean_initial-mean_expert)
-    R2a = np.mean(abs(bound_opinions.loc[bound_opinions['type']=="First"]['value']-mean_expert))
-    R2b = np.mean(abs(bound_opinions.loc[bound_opinions['type']=="Last"]['value']-mean_expert))
-    R2 = R2a-R2b
-    # d) N8,0-N8,T
-    N8_0 = bound_opinions.loc[(bound_opinions.type=='First') & (bound_opinions.value>=8)].shape[0]
-    N8_T = bound_opinions.loc[(bound_opinions.type=='Last') & (bound_opinions.value>=8)].shape[0]
-    # e) N9,0-N9,T
-    N9_0 = bound_opinions.loc[(bound_opinions.type=='First') & (bound_opinions.value>=8.5)].shape[0]
-    N9_T = bound_opinions.loc[(bound_opinions.type=='Last') & (bound_opinions.value>=8.5)].shape[0]
-    # f) N0,0-N0,T
-    N1_0 = bound_opinions.loc[(bound_opinions.type=='First') & (bound_opinions.value<=1)].shape[0]
-    N1_T = bound_opinions.loc[(bound_opinions.type=='Last') & (bound_opinions.value<=1)].shape[0]
-    # g) N1,0-N1,T
-    N0_0 = bound_opinions.loc[(bound_opinions.type=='First') & (bound_opinions.value<=0.5)].shape[0]
-    N0_T = bound_opinions.loc[(bound_opinions.type=='Last') & (bound_opinions.value<=0.5)].shape[0]
-    # R3
-    R3a = (N8_0-N8_T)/n_iterations
-    R3b = (N9_0-N9_T)/n_iterations
-    R3c = (N1_0-N1_T)/n_iterations
-    R3d = (N0_0-N0_T)/n_iterations
-    # h) MT
-    # want mode for each iteration - number of peaks in KDE
-    # if extremists, need to exclude from analysis
+    
+    R2a = np.mean(abs(bound_opinions.loc[bound_opinions['type'] == "First"]['value'] - mean_expert))
+    R2b = np.mean(abs(bound_opinions.loc[bound_opinions['type'] == "Last"]['value'] - mean_expert))
+    
+    return R2a, R2b, R2a - R2b
+
+def calculate_R3(bound_opinions, n_iterations):
+    """
+    Calculate R3: Differences in the number of extreme opinions (N8, N9, N0, N1) across iterations.
+    """
+    N8_0 = bound_opinions.loc[(bound_opinions.type == 'First') & (bound_opinions.value >= 8)].shape[0]
+    N8_T = bound_opinions.loc[(bound_opinions.type == 'Last') & (bound_opinions.value >= 8)].shape[0]
+    
+    N9_0 = bound_opinions.loc[(bound_opinions.type == 'First') & (bound_opinions.value >= 8.5)].shape[0]
+    N9_T = bound_opinions.loc[(bound_opinions.type == 'Last') & (bound_opinions.value >= 8.5)].shape[0]
+    
+    N1_0 = bound_opinions.loc[(bound_opinions.type == 'First') & (bound_opinions.value <= 1)].shape[0]
+    N1_T = bound_opinions.loc[(bound_opinions.type == 'Last') & (bound_opinions.value <= 1)].shape[0]
+    
+    N0_0 = bound_opinions.loc[(bound_opinions.type == 'First') & (bound_opinions.value <= 0.5)].shape[0]
+    N0_T = bound_opinions.loc[(bound_opinions.type == 'Last') & (bound_opinions.value <= 0.5)].shape[0]
+    
+    R3a = (N8_0 - N8_T) / n_iterations
+    R3b = (N9_0 - N9_T) / n_iterations
+    R3c = (N1_0 - N1_T) / n_iterations
+    R3d = (N0_0 - N0_T) / n_iterations
+    
+    return R3a, R3b, R3c, R3d
+
+def calculate_R4(bound_opinions, extreme_index, n_iterations):
+    """
+    Calculate R4: Number of unique modes in the final distribution of opinions?
+    """
+
+    # ToDO
+    # If I understand correctly, this computes the #modality for each past iteration, at the end of each iteration
+    # Could be more efficient by computing the #modality once for each iteration, and storing it for later retrieval on
+    # subsequent function calls.
+
     if extreme_index == 0:
-        modal_data = bound_opinions.loc[bound_opinions.type=='Last']
+        modal_data = bound_opinions.loc[bound_opinions.type == 'Last']
     else:
-        modal_data = bound_opinions.loc[(bound_opinions.type=='Last') & (~bound_opinions.id.isin(extreme_index))]
-    # plot modal data as sense check if needed
-    #sns.distplot(modal_data['value'], hist=False, kde=True,bins=int(1800/5), color = 'darkblue', hist_kws={'edgecolor':'black'},kde_kws={'linewidth': 4})
+        modal_data = bound_opinions.loc[(bound_opinions.type == 'Last') & (~bound_opinions.id.isin(extreme_index))]
     
-    # replace msort with sort and axis=0
     data = np.sort(modal_data['value'], axis=0)
-    
     intervals = UniDip(data).run()
-    # the bounds of each peak
     R4 = len(intervals)
-    # is this always the mode?
+
     modes = []
     for iteration in range(n_iterations):
-        
-        # replaced msort again
-        iter_modal_data = np.sort(modal_data.loc[modal_data.iteration==iteration]['value'], axis=0)
-        
+        iter_modal_data = np.sort(modal_data.loc[modal_data.iteration == iteration]['value'], axis=0)
         intervals = UniDip(iter_modal_data).run()
         modes.append(len(intervals))
-    individual_mode_count = len([x for x in modes if x==R4]) 
-    # i) Var(X)T
-    R5 = np.mean((bound_opinions.loc[bound_opinions['type']=="Last"].groupby('iteration').std()['value'])**2)
-    # j) Average runtime
-    avg_T = bound_opinions.loc[bound_opinions['type']=="Last"][['variable','iteration']].groupby('iteration').max().mean()[0]
-    # k) Average flux start time
-    avg_t_opm = bound_opinions.loc[bound_opinions['type']=="Start"]['variable'].mean()
-    # l) Average flux end time
-    avg_t_cm = bound_opinions.loc[bound_opinions['type']=="Mid"]['variable'].mean()
-    # m) Average flux time
-    avg_flux = avg_t_cm-avg_t_opm
+
+    individual_mode_count = len([x for x in modes if x == R4])
     
-    return {"R1":R1,
-            "R2a":R2a,
-            "R2b":R2b,
-            "R2":R2,
-            "R3a (8)":R3a,
-            "R3b (9)":R3b,
-            "R3c (1)":R3c,
-            "R3d (0)":R3d,
-            "R4":R4,
-            "R4 uniqueness":individual_mode_count/n_iterations,
-            "R5":R5,
-            "Average runtime":avg_T,
-            "Average t OPM":avg_t_opm,
-            "Average t CM":avg_t_cm,
-            "Average time in flux":avg_flux}
+    return R4, individual_mode_count / n_iterations
+
+def calculate_R5(bound_opinions):
+    """
+    Calculate R5: Variance of the final opinions across iterations.
+    """
+    R5 = np.mean((bound_opinions.loc[bound_opinions['type'] == "Last"].groupby('iteration')['value'].std().dropna())**2)
+    return R5
+
+def calculate_avg_runtime(bound_opinions):
+    """
+    Calculate the average runtime for all iterations.
+    """
+    avg_T = bound_opinions.loc[bound_opinions['type'] == "Last"][['variable', 'iteration']].groupby('iteration').max().mean()[0]
+    return avg_T
+
+def calculate_avg_flux_times(bound_opinions):
+    """
+    Calculate average flux start time, end time, and time spent in flux.
+    """
+    avg_t_opm = bound_opinions.loc[bound_opinions['type'] == "Start"]['variable'].mean()
+    avg_t_cm = bound_opinions.loc[bound_opinions['type'] == "Mid"]['variable'].mean()
+    avg_flux = avg_t_cm - avg_t_opm
+    return avg_t_opm, avg_t_cm, avg_flux
+
+def opinion_analysis(data, experts, expert_input, n_iterations, extreme_index):
+    """
+    Perform opinion analysis on the provided data and return a dictionary with calculated metrics.
+    """
+    opinion_overview = pd.melt(data[[col for col in data if col.startswith(('opinions_', 'iteration', 'id'))]], id_vars=['iteration', 'id'])
+    opinion_overview['variable'] = opinion_overview.variable.str.replace('opinions_', '')
+    opinion_overview.variable = opinion_overview.variable.astype(float)
+    
+    max_round = max(opinion_overview.variable)
+    opinion_overview = opinion_overview[opinion_overview['value'].notna()].sort_values(by='variable')
+    
+    bound_opinions = pd.concat([opinion_overview.groupby(['iteration', 'id']).head(1), opinion_overview.groupby(['iteration', 'id']).tail(1)]).drop_duplicates().sort_values(['iteration', 'id']).reset_index(drop=True)
+    bound_opinions['type'] = np.where(bound_opinions['variable'] == 0, "First", "Last")
+    
+    R1 = calculate_R1(bound_opinions)
+    R2a, R2b, R2 = calculate_R2(bound_opinions, expert_input, max_round)
+    R3a, R3b, R3c, R3d = calculate_R3(bound_opinions, n_iterations)
+    R4, R4_uniqueness = calculate_R4(bound_opinions, extreme_index, n_iterations)
+    R5 = calculate_R5(bound_opinions)
+    avg_T = calculate_avg_runtime(bound_opinions)
+    avg_t_opm, avg_t_cm, avg_flux = calculate_avg_flux_times(bound_opinions)
+    
+    # Need to change the rest of the code to properly reflect the conditions mentioned in the paper
+    return {
+        #"R1": R1,
+        #"R1? Satisfied": R1 > 0,
+        #"R2a": R2a,
+        #"R2b": R2b,
+        #"R2": R2,
+        #"R1 (Paper) Satisfied": R2 > 0,
+        #"R3a (8)": R3a,
+        #"R3b (9)": R3b,
+        #"R3c (1)": R3c,
+        #"R3d (0)": R3d,
+        #"R4 (Paper) Satisfied": R3b > 0 and R3d > 0,
+        #"R4": R4,
+        #"R4 uniqueness": R4_uniqueness,
+        #"R3 (Paper) Satisfied": R4 == 1,
+        #"R5": R5,
+        #"R2 (Paper) Satisfied": R5 > 0,
+        #"Average runtime": avg_T,
+        #"Average t OPM": avg_t_opm,
+        #"Average t CM": avg_t_cm,
+        #"Average time in flux": avg_flux
+        
+        "R1": R2,
+        "R1 (Paper) Satisfied": R2 > 0,
+        "R2" : R5,
+        "R2 (Paper) Satisfied": R5 > 0.1, # Paper uses 0.1 as threshold
+        "R3": R4,
+        "R3 (Paper) Satisfied": R4 == 1,
+        "R4a (9)": R3b,
+        "R4b (0)": R3d,
+        "R4 (Paper) Satisfied": R3b > 0 and R3d > 0,
+        
+    }
+
 
 
 

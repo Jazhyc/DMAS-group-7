@@ -1,7 +1,8 @@
-matplotlib==3.3.4
-numpy==1.19.5
-pandas==1.1.5
-scipy==1.5.4
-seaborn==0.11.2
-tqdm==4.64.1
-unidip==0.1.1
+diptest==0.8.1
+matplotlib==3.9.2
+numpy==2.1.1
+pandas==2.2.2
+scipy==1.14.1
+seaborn==0.13.2
+tqdm==4.66.5
+weightedstats==0.4.1
